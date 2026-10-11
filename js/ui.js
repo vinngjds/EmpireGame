@@ -1,809 +1,434 @@
 'use strict';
-// Interface do jogo: HUD, minimapa, seleção, comandos e entrada do jogador
+// Interface mobile-first -------------------------------------------------------
 
-const HK = 'QWERTASDFGZXCVB';
-const HK_CODES = { KeyQ: 0, KeyW: 1, KeyE: 2, KeyR: 3, KeyT: 4, KeyA: 5, KeyS: 6, KeyD: 7, KeyF: 8, KeyG: 9, KeyZ: 10, KeyX: 11, KeyC: 12, KeyV: 13, KeyB: 14 };
-const BUILD_ORDER = ['house', 'mill', 'lumbercamp', 'miningcamp', 'farm', 'barracks', 'archeryrange', 'stable', 'blacksmith', 'market', 'siegeworkshop', 'tower', 'castle', 'towncenter'];
-const RES_LABEL = { tree: 'Árvore', gold: 'Mina de Ouro', stone: 'Mina de Pedra', berry: 'Arbusto de Frutas', carcass: 'Carcaça', deer: 'Veado' };
+const $ = s => document.querySelector(s);
+const ui = { tab: 'painel', chart: 'gdp', polCat: 'Todas', busy: false, diff: 'normal' };
+function goalText(c, w) {
+  return c.startRank <= c.goal ? `Manter Top ${c.goal} até ${END_YEAR}` : `Top ${c.goal} · ${w.streak}/${D(w).streak} anos`;
+}
+const nf = (n, d = 0) => Number(n).toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
+const fmtGdp = bn => bn >= 1000 ? 'US$ ' + nf(bn / 1000, 2) + ' tri' : 'US$ ' + nf(bn, 0) + ' bi';
+const fmtPop = m => m >= 1000 ? nf(m / 1000, 2) + ' bi' : m >= 10 ? nf(m, 0) + ' mi' : nf(m, 1) + ' mi';
+const sign = (v, d = 1) => (v >= 0 ? '+' : '−') + nf(Math.abs(v), d);
+const ratingLetter = r => r > 85 ? 'AAA' : r > 75 ? 'AA' : r > 65 ? 'A' : r > 55 ? 'BBB' : r > 45 ? 'BB' : r > 35 ? 'B' : r > 22 ? 'CCC' : 'D';
+function sev(good) { return good > 0.66 ? 'good' : good > 0.33 ? 'mid' : 'bad'; } // good em 0..1
+function esc(s) { return String(s).replace(/[&<>]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m])); }
 
-function costHtml(cost, p) {
-  let s = '';
-  for (const r of RESOURCES) if (cost[r]) s += '<span class="' + (p && p.res[r] < cost[r] ? 'bad' : '') + '">' + RES_ICON[r] + cost[r] + '</span> ';
-  return s;
+// ---------------------------------------------------------------- modais
+function modal(html, buttons, opts) {
+  return new Promise(res => {
+    const o = document.createElement('div');
+    o.className = 'overlay';
+    const b = (buttons || []).map((x, i) => `<button class="btn ${x.cls || ''}" data-i="${i}"${x.dis ? ' disabled' : ''}>${x.label}${x.hint ? `<small>${x.hint}</small>` : ''}</button>`).join('');
+    o.innerHTML = `<div class="sheet ${opts && opts.cls || ''}"><div class="sheet-body">${html}</div><div class="sheet-btns">${b}</div></div>`;
+    document.body.appendChild(o);
+    const sb = o.querySelector('.sheet-body'); sb.scrollTop = 0;
+    o.addEventListener('click', e => {
+      const btn = e.target.closest('button[data-i]');
+      if (btn && !btn.disabled) { o.remove(); res(+btn.dataset.i); }
+      else if (e.target === o && opts && opts.dismiss) { o.remove(); res(-1); }
+    });
+  });
+}
+function toast(text, kind) {
+  const t = document.createElement('div');
+  t.className = 'toast ' + (kind || '');
+  t.textContent = text;
+  document.body.appendChild(t);
+  setTimeout(() => t.classList.add('out'), 2200);
+  setTimeout(() => t.remove(), 2700);
 }
 
-class UI {
-  constructor(game, renderer, root, hooks) {
-    this.g = game; this.r = renderer; this.root = root; this.hooks = hooks || {};
-    renderer.ui = this;
-    this.sel = [];             // entidades selecionadas
-    this.selSet = new Set();
-    this.groups = {};
-    this.placing = null;
-    this.cmdMode = null;
-    this.drag = null;
-    this.mouse = { x: 0, y: 0, inside: false };
-    this.mouseWorld = null;
-    this.keys = {};
-    this.cells = [];
-    this.hoverCell = -1;
-    this.msgs = [];
-    this.pings = [];
-    this.hudTimer = 0;
-    this.lastClick = { t: 0, id: 0 };
-    this.cardSig = '';
-    this.paused = false;
-    this.cycle = { idleVil: 0, idleMil: 0 };
-    this.mmDraw = 0;
-    this.build();
-    this.bind();
-    const p = game.human;
-    renderer.centerOn(p.start.x, p.start.y + 3);
-    renderer.cam.zoom = 1;
-    // seleciona o centro da cidade
-    const tc = p.blds.find(b => b.type === 'towncenter');
-    if (tc) this.setSel([tc]);
-  }
+// ---------------------------------------------------------------- gráficos
+function spark(vals, color, w = 300, h = 90) {
+  if (vals.length < 2) return `<svg viewBox="0 0 ${w} ${h}" class="spark"></svg>`;
+  const mn = Math.min(...vals), mx = Math.max(...vals), r = mx - mn || 1;
+  const pts = vals.map((v, i) => [4 + i / (vals.length - 1) * (w - 8), h - 6 - (v - mn) / r * (h - 14)]);
+  const d = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
+  const area = d + ` L${pts[pts.length - 1][0].toFixed(1)} ${h} L${pts[0][0].toFixed(1)} ${h} Z`;
+  return `<svg viewBox="0 0 ${w} ${h}" class="spark" preserveAspectRatio="none"><path d="${area}" fill="${color}" opacity=".16"/><path d="${d}" fill="none" stroke="${color}" stroke-width="2.4" stroke-linejoin="round"/><circle cx="${pts[pts.length - 1][0].toFixed(1)}" cy="${pts[pts.length - 1][1].toFixed(1)}" r="3.5" fill="${color}"/></svg>`;
+}
+const bar = (v, max, cls) => `<div class="bar ${cls || ''}"><i style="width:${clamp(v / max * 100, 0, 100).toFixed(0)}%"></i></div>`;
 
-  // ------------------------------------------------------------------ DOM
-  build() {
-    const root = this.root;
-    root.innerHTML = `
-      <canvas id="view"></canvas>
-      <div id="topbar">
-        <div class="res" id="r-food" title="Comida"><b>🍖</b><span>0</span><small>0</small></div>
-        <div class="res" id="r-wood" title="Madeira"><b>🪵</b><span>0</span><small>0</small></div>
-        <div class="res" id="r-gold" title="Ouro"><b>🪙</b><span>0</span><small>0</small></div>
-        <div class="res" id="r-stone" title="Pedra"><b>🪨</b><span>0</span><small>0</small></div>
-        <div class="res" id="r-pop" title="População"><b>👥</b><span>0/0</span></div>
-        <div class="res wide" id="r-age" title="Era atual"></div>
-        <div class="grow"></div>
-        <button id="b-idle" title="Aldeão ocioso ( . )">👷<span>0</span></button>
-        <button id="b-idlem" title="Soldado ocioso ( , )">⚔️<span>0</span></button>
-        <div class="res" id="r-time">0:00</div>
-        <button id="b-speed" title="Velocidade (+/-)">1.0x</button>
-        <button id="b-pause" title="Pausa (P)">⏸</button>
-        <button id="b-menu" title="Menu (Esc)">☰</button>
+// ---------------------------------------------------------------- tela principal
+function render() {
+  const g = Game, c = g.me, w = g.w;
+  const next = TERM - (w.turn % TERM);
+  const app = $('#app');
+  app.innerHTML = `
+    <header class="top">
+      <div class="who"><span class="flag">${c.flag}</span><div><b>${c.name}</b><small>${goalText(c, w)}</small></div></div>
+      <div class="hud">
+        <div class="pill" title="Ano"><b>${w.year}</b><small>${w.year >= END_YEAR ? 'último ano' : (END_YEAR - w.year) + ' anos restantes'}</small></div>
+        <div class="pill" title="Posição no ranking de poder"><b>#${c.rank}</b><small>poder ${nf(c.power, 0)}</small></div>
+        ${w.war ? '<div class="pill war" title="País em guerra"><b>⚔️</b><small>guerra</small></div>' : ''}
+        <div class="pill cp" title="Capital político: limita leis e acordos"><b>⭐ ${nf(c.cp, 1)}</b><small>capital pol.</small></div>
       </div>
-      <div id="msgs"></div>
-      <div id="objectives" hidden></div>
-      <div id="hud">
-        <div id="mmwrap"><canvas id="minimap" width="240" height="120"></canvas></div>
-        <div id="info"></div>
-        <div id="card"></div>
+    </header>
+    <main id="view" class="view"></main>
+    <button id="next" class="fab">Próximo ano ▶<small>eleição em ${next === TERM ? TERM : next} ${next === 1 ? 'ano' : 'anos'}</small></button>
+    <nav class="tabs">
+      ${[['painel', '📊', 'Painel'], ['orc', '💰', 'Orçamento'], ['leis', '📜', 'Leis'], ['povo', '👥', 'Povo'], ['mundo', '🌍', 'Mundo']].map(t => `<button data-tab="${t[0]}" class="${ui.tab === t[0] ? 'on' : ''}"><span>${t[1]}</span>${t[2]}</button>`).join('')}
+    </nav>`;
+  renderTab();
+}
+function refreshHud() {
+  const c = Game.me, w = Game.w;
+  const pills = document.querySelectorAll('.hud .pill');
+  if (!pills.length) return;
+  pills[1].innerHTML = `<b>#${c.rank}</b><small>poder ${nf(c.power, 0)}</small>`;
+  pills[2].innerHTML = `<b>⭐ ${nf(c.cp, 1)}</b><small>capital pol.</small>`;
+}
+function renderTab() {
+  const v = $('#view');
+  if (!v) return;
+  const y = v.scrollTop;
+  ({ painel: tabPainel, orc: tabOrc, leis: tabLeis, povo: tabPovo, mundo: tabMundo })[ui.tab](v);
+  window.scrollTo(0, 0);
+}
+
+// ---- Painel
+function statCard(label, value, sub, good, tip) {
+  return `<div class="stat ${good !== undefined ? sev(good) : ''}" title="${esc(tip || '')}"><small>${label}</small><b>${value}</b><em>${sub || ''}</em></div>`;
+}
+function tabPainel(v) {
+  const c = Game.me, w = Game.w, b = c.lastBudget || budget(c, w);
+  const pov = poverty(c);
+  const charts = { gdp: ['PIB (US$ bi)', c.hist.gdp, '#5cc8ff'], gdpPc: ['PIB per capita (US$ mil)', c.hist.gdpPc, '#7ddc84'], pop: ['População (mi)', c.hist.pop, '#ffb15c'], approval: ['Aprovação (%)', c.hist.approval, '#ff7a8a'], power: ['Poder nacional', c.hist.power, '#c59bff'], rank: ['Posição no ranking', c.hist.rank, '#f5d76e'] };
+  const ch = charts[ui.chart];
+  const tips = Game.advise();
+  v.innerHTML = `
+    <section class="grid">
+      ${statCard('PIB', fmtGdp(c.pop * c.gdpPc), `${sign(c.g)}% a.a.`, clamp((c.g + 1) / 5, 0, 1), 'Produto interno bruto')}
+      ${statCard('PIB per capita', 'US$ ' + nf(c.gdpPc, 1) + ' mil', `#${c.gdpRank} maior economia`, clamp(c.gdpPc / 25, 0, 1))}
+      ${statCard('População', fmtPop(c.pop), `natalidade ${nf(c.birth, 0)}‰ · mortalidade ${nf(c.deathRate || 7, 0)}‰`)}
+      ${statCard('Aprovação', nf(c.approval, 0) + '%', `estabilidade ${nf(c.stab, 0)}`, c.approval / 70)}
+      ${statCard('Inflação', nf(c.infl, 1) + '%', 'ao ano', 1 - clamp((c.infl - 3) / 15, 0, 1))}
+      ${statCard('Dívida pública', nf(c.debt, 0) + '% PIB', `rating ${ratingLetter(c.rating)} · saldo ${sign(b.balance)}%`, 1 - clamp((c.debt - 40) / 100, 0, 1))}
+      ${statCard('Empregos', nf(c.jobs, 0) + '/100', 'índice', c.jobs / 75)}
+      ${statCard('Educação', nf(c.edu, 0), 'índice', c.edu / 80)}
+      ${statCard('Saúde', nf(c.health, 0), 'índice', c.health / 80)}
+      ${statCard('Tecnologia', nf(c.tech, 0), 'índice', c.tech / 80)}
+      ${statCard('Infraestrutura', nf(c.infra, 0), 'índice', c.infra / 80)}
+      ${statCard('Pobreza', nf(pov, 0) + '%', `desigualdade ${nf(c.ineq, 0)}`, 1 - clamp(pov / 50, 0, 1))}
+      ${statCard('Corrupção', nf(c.corr, 0), 'índice (menor é melhor)', 1 - clamp((c.corr - 15) / 60, 0, 1))}
+      ${statCard('Criminalidade', nf(c.crime, 0), 'índice', 1 - clamp(c.crime / 70, 0, 1))}
+      ${statCard('Poluição', nf(c.pollution, 0), 'índice', 1 - clamp((c.pollution - 20) / 60, 0, 1))}
+      ${statCard('Força militar', nf(c.mil, 0), 'índice', c.mil / 70)}
+    </section>
+    <section class="card">
+      <div class="chips">${Object.entries(charts).map(([k, x]) => `<button class="chip ${ui.chart === k ? 'on' : ''}" data-chart="${k}">${x[0].split(' (')[0]}</button>`).join('')}</div>
+      <div class="chart-title">${ch[0]} <small>${START_YEAR}–${w.year}</small></div>
+      ${spark(ch[1], ch[2])}
+    </section>
+    <section class="card">
+      <h3>Conselheiros</h3>
+      ${tips.map(t => `<div class="advisor"><span class="av">${ADVISORS[t.who].icon}</span><div><b>${ADVISORS[t.who].name}</b><small>${ADVISORS[t.who].role}</small><p>${t.text}</p></div></div>`).join('')}
+    </section>
+    <section class="card">
+      <h3>Jornal</h3>
+      ${w.log.slice(-7).reverse().map(l => `<div class="news"><span>${l.icon}</span><div><small>${l.year}</small>${esc(l.text)}</div></div>`).join('') || '<p class="dim">Sem notícias ainda. Passe o primeiro ano.</p>'}
+    </section>`;
+}
+
+// ---- Orçamento
+function effLoss(c) { return 1 - c.corr / 170; }
+function spendProjection(c, s) {
+  const eff = effLoss(c), v = c.sp[s.id];
+  const m = { edu: 'edu', health: 'health', infra: 'infra', rd: 'tech', def: 'mil' }[s.id];
+  if (!m) return null;
+  const k = { edu: 0.75, health: 0.75, infra: 0.8, rd: 1.2, def: 0.9 }[s.id];
+  return grow(c[m], v, eff, s.maint, k);
+}
+function budgetSummary() {
+  const c = Game.me, w = Game.w, b = budget(c, w);
+  const gdp = c.pop * c.gdpPc;
+  return `
+    <div class="sumrow"><span>Receita</span><b>${nf(b.revenue, 1)}% PIB <small>(${fmtGdp(b.revenue / 100 * gdp)})</small></b></div>
+    <div class="sumrow"><span>Despesas totais</span><b>${nf(b.expense, 1)}% PIB</b></div>
+    <div class="sumrow sub"><span>↳ áreas escolhidas</span><b>${nf(b.spend, 1)}%</b></div>
+    <div class="sumrow sub"><span>↳ previdência (obrigatória)</span><b>${nf(b.pens, 1)}%</b></div>
+    <div class="sumrow sub"><span>↳ custo das leis</span><b>${nf(b.upk, 1)}%</b></div>
+    <div class="sumrow sub"><span>↳ juros da dívida (${nf(b.rate, 1)}% a.a.)</span><b>${nf(b.interest, 1)}%</b></div>
+    <div class="sumrow total ${b.balance < -3 ? 'bad' : b.balance < 0 ? 'mid' : 'good'}"><span>Saldo do ano</span><b>${sign(b.balance)}% PIB</b></div>`;
+}
+function tabOrc(v) {
+  const c = Game.me;
+  v.innerHTML = `
+    <section class="card"><h3>Resumo das contas</h3><div id="bsum">${budgetSummary()}</div>
+      <p class="dim">Déficit vira dívida; dívida alta eleva juros e derruba o rating. Corrupção desperdiça parte de cada gasto.</p></section>
+    <section class="card">
+      <h3>Impostos</h3>
+      <div class="slider"><div class="srow"><span>🧾 Carga tributária</span><b id="v-tax">${nf(c.tax, 1)}% do PIB</b></div>
+        <input type="range" min="8" max="50" step="0.5" value="${c.tax}" data-sp="tax"><small class="dim">Mais imposto = mais receita, mas menos crescimento e o empresariado reclama.</small></div>
+    </section>
+    <section class="card">
+      <h3>Gastos por área</h3>
+      ${SPEND.map(s => {
+        const pr = spendProjection(c, s);
+        return `<div class="slider"><div class="srow"><span>${s.icon} ${s.name}</span><b id="v-${s.id}">${nf(c.sp[s.id], 1)}%</b></div>
+        <input type="range" min="0" max="${s.max}" step="0.1" value="${c.sp[s.id]}" data-sp="${s.id}">
+        <small class="dim" id="p-${s.id}">${projText(c, s)}</small></div>`;
+      }).join('')}
+    </section>`;
+}
+function projText(c, s) {
+  const gdp = c.pop * c.gdpPc;
+  const pr = spendProjection(c, s);
+  let t = `≈ ${fmtGdp(c.sp[s.id] / 100 * gdp)}/ano · manutenção ${nf(s.maint * (0.6 + 0.8 * ({ edu: c.edu, health: c.health, infra: c.infra, rd: c.tech, def: c.mil }[s.id] || 50) / 100), 1)}%. `;
+  if (pr !== null) t += pr > 0.05 ? `<span class="good">▲ +${nf(pr, 1)}/ano</span>` : pr < -0.05 ? `<span class="bad">▼ ${nf(pr, 1)}/ano</span>` : '<span class="mid">estável</span>';
+  else t += s.tip;
+  return t;
+}
+
+// ---- Leis
+const FXN = { edu: ['Educação', 1], health: ['Saúde', 1], infra: ['Infraestrutura', 1], tech: ['Tecnologia', 1], ineq: ['Desigualdade', -1], corr: ['Corrupção', -1], crime: ['Criminalidade', -1], pollution: ['Poluição', -1], jobs: ['Empregos', 1], mil: ['Força militar', 1], comm: ['Dependência de commodities', -1], infl: ['Inflação', -1], gBonus: ['Crescimento', 1], birthT: ['Natalidade', 0], migr: ['Imigração', 0], collect: ['Arrecadação', 1], pension: ['Gasto com previdência', -1], influence: ['Influência', 1], open: ['Abertura comercial', 0] };
+const CATS = ['Todas', 'Ativas', 'Economia', 'Social', 'Demografia', 'Governança', 'Tecnologia', 'Defesa'];
+function policyCard(c, p) {
+  const act = c.pol[p.id], can = canEnact(c, p.id);
+  const fx = Object.keys(p.fx || {}).map(k => { const [n, good] = FXN[k] || [k, 0]; const up = p.fx[k] > 0; const g = good === 0 ? 'neutral' : (up === (good > 0) ? 'good' : 'bad'); return `<span class="tag ${g}">${up ? '▲' : '▼'} ${n}</span>`; });
+  if (p.tgt && p.tgt.open) fx.push(`<span class="tag neutral">${p.tgt.open > 50 ? '▲' : '▼'} Abertura comercial</span>`);
+  if (p.once) for (const k in p.once) { if (k === 'debt') fx.push(`<span class="tag good">${p.once[k] < 0 ? '−' : '+'}${Math.abs(p.once[k])}% dívida (único)</span>`); }
+  const fac = Object.entries(p.fac || {}).map(([f, v]) => `<span class="tag ${v > 0 ? 'good' : 'bad'}">${F[f]} ${v > 0 ? '+' : '−'}${Math.abs(v)}</span>`);
+  const years = act ? Math.min(p.delay, Game.w.year - act.since + 1) : 0;
+  return `<article class="policy ${act ? 'active' : ''}">
+    <div class="ph"><span class="pi">${p.icon}</span><div><b>${p.name}</b><small>${p.cat} · ⭐ ${p.cp} · 💰 ${p.upkeep > 0 ? '−' : '+'}${nf(Math.abs(p.upkeep), 1)}% PIB/ano · ⏳ ${p.delay} anos</small></div>${act ? '<span class="badge">EM VIGOR</span>' : ''}</div>
+    <p>${p.desc}</p>
+    <div class="tags">${fx.join('')}</div>
+    <div class="tags">${fac.join('')}</div>
+    ${act ? `<div class="ramp">Efeito pleno: ${years}/${p.delay} anos${bar(years, p.delay, 'blue')}</div><button class="btn small ghost" data-repeal="${p.id}">Revogar (⭐1)</button>`
+      : `<button class="btn small ${can.ok ? '' : 'dis'}" data-enact="${p.id}" ${can.ok ? '' : 'disabled'}>${can.ok ? 'Aprovar lei' : can.why}</button>`}
+  </article>`;
+}
+function tabLeis(v) {
+  const c = Game.me;
+  let list = POLICIES.slice();
+  if (ui.polCat === 'Ativas') list = list.filter(p => c.pol[p.id]);
+  else if (ui.polCat !== 'Todas') list = list.filter(p => p.cat === ui.polCat);
+  list.sort((a, b) => (!!c.pol[b.id] - !!c.pol[a.id]) || (canEnact(c, b.id).ok - canEnact(c, a.id).ok));
+  v.innerHTML = `
+    <section class="card tight"><p class="dim">Leis têm <b>efeito atrasado</b>: o benefício cresce ao longo dos anos, mas o custo e a reação das facções vêm logo. Cada lei custa capital político (⭐).</p>
+    <div class="chips">${CATS.map(k => `<button class="chip ${ui.polCat === k ? 'on' : ''}" data-cat="${k}">${k}${k === 'Ativas' ? ' (' + Object.keys(c.pol).length + ')' : ''}</button>`).join('')}</div></section>
+    ${list.map(p => policyCard(c, p)).join('') || '<p class="dim pad">Nenhuma lei nesta categoria.</p>'}`;
+}
+
+// ---- Povo
+function tabPovo(v) {
+  const c = Game.me, w = Game.w;
+  const sh = c.shares || factionShares(c);
+  const next = TERM - (w.turn % TERM);
+  const le = 38 + 0.42 * c.health + 5 * (1 - Math.exp(-c.gdpPc / 8));
+  const yS = c.young / c.pop * 100, wS = c.work / c.pop * 100, oS = c.old / c.pop * 100;
+  const apprCls = c.approval >= 55 ? 'good' : c.approval >= 48 ? 'mid' : 'bad';
+  v.innerHTML = `
+    <section class="card">
+      <div class="gauge ${apprCls}"><b>${nf(c.approval, 0)}%</b><small>aprovação do governo</small></div>
+      <p class="center regime ${c.pol.autoritarismo ? 'bad' : ''}">${c.pol.autoritarismo ? '🦅 Regime autoritário: sem eleições; estabilidade pela força.' : '🏛️ Democracia'}</p>
+      ${c.pol.autoritarismo ? '' : `<p class="center">🗳️ Próxima eleição em <b>${next} ${next === 1 ? 'ano' : 'anos'}</b> (${w.year + next}). Projeção de votos: <b>~${nf(clamp(c.approval + D(w).inc, 0, 100), 0)}%</b> (precisa de 50%).</p>`}
+      <p class="dim center">Estabilidade: ${nf(c.stab, 0)}/100 — abaixo de 25 o risco de golpe e revoltas cresce.</p>
+    </section>
+    ${w.war ? warCard(c, w) : ''}
+    <section class="card"><h3>Facções</h3>
+      ${FACTIONS.map(f => `<div class="faction"><div class="fh"><span class="fi">${f.icon}</span><div><b>${f.name}</b><small>peso político ${nf(sh[f.id] * 100, 0)}%</small></div><span class="fs ${sat(c.sat[f.id])}">${nf(c.sat[f.id], 0)}%</span></div>
+        ${bar(c.sat[f.id], 100, sat(c.sat[f.id]))}<small class="dim">${f.desc}</small></div>`).join('')}
+    </section>
+    <section class="card"><h3>Demografia</h3>
+      <div class="agebar"><i class="y" style="width:${yS}%"></i><i class="w" style="width:${wS}%"></i><i class="o" style="width:${oS}%"></i></div>
+      <div class="legend"><span><i class="y"></i>0–14: ${nf(yS, 0)}%</span><span><i class="w"></i>15–64: ${nf(wS, 0)}%</span><span><i class="o"></i>65+: ${nf(oS, 0)}%</span></div>
+      <div class="grid2">
+        ${statCard('População', fmtPop(c.pop), `${sign(c.workGrowth || 0)}% força de trabalho`)}
+        ${statCard('Natalidade', nf(c.birth, 0) + '‰', c.birth < 12 ? 'envelhecimento' : c.birth > 30 ? 'jovem' : 'transição')}
+        ${statCard('Mortalidade', nf(c.deathRate || 0, 0) + '‰', 'por mil')}
+        ${statCard('Expectativa de vida', nf(le, 0) + ' anos', 'estimada')}
+        ${statCard('Urbanização', nf(c.urban, 0) + '%', `agro ${nf(c.agro, 0)}% · indústria ${nf(c.ind, 0)}%`)}
+        ${statCard('Pobreza', nf(poverty(c), 0) + '%', `desigualdade ${nf(c.ineq, 0)}`)}
       </div>
-      <div id="tip" hidden></div>
-      <div id="banner" hidden></div>
-      <div id="overlay" hidden></div>`;
-    this.cv = root.querySelector('#view');
-    this.mm = root.querySelector('#minimap');
-    this.mmCtx = this.mm.getContext('2d');
-    this.mmTerr = document.createElement('canvas'); this.mmTerr.width = this.mmTerr.height = this.g.n;
-    this.mmTerrCtx = this.mmTerr.getContext('2d');
-    this.mmImg = this.mmTerrCtx.createImageData(this.g.n, this.g.n);
-    this.el = {
-      info: root.querySelector('#info'), card: root.querySelector('#card'), tip: root.querySelector('#tip'), msgs: root.querySelector('#msgs'),
-      overlay: root.querySelector('#overlay'), banner: root.querySelector('#banner'), obj: root.querySelector('#objectives'),
-    };
-    this.r.cv = this.cv; this.r.ctx = this.cv.getContext('2d'); this.r.resize();
-  }
+    </section>`;
+}
+function warCard(c, w) {
+  const i = warInfo(c, w);
+  return `<section class="card warcard"><h3>⚔️ Guerra contra ${i.foe.flag} ${i.foe.name}</h3>
+    <div class="front"><i style="left:${(i.front + 100) / 2}%"></i></div><div class="legend"><span>derrota</span><span>frente ${nf(i.front, 0)}</span><span>vitória</span></div>
+    <p class="dim">Força relativa: <b>${nf(i.R * 100, 0)}%</b> do inimigo · fadiga ${nf(c.fatigue || 0, 0)} · mobilização ${c.mobil || 0}/2 · ${i.years} ${i.years === 1 ? 'ano' : 'anos'} de guerra.</p></section>`;
+}
+const sat = x => x >= 55 ? 'good' : x >= 40 ? 'mid' : 'bad';
 
-  bind() {
-    const root = this.root, cv = this.cv;
-    this.onResize = () => { this.r.resize(); };
-    window.addEventListener('resize', this.onResize);
-    cv.addEventListener('contextmenu', e => e.preventDefault());
-    root.addEventListener('contextmenu', e => e.preventDefault());
-    cv.addEventListener('mousedown', e => this.onMouseDown(e));
-    window.addEventListener('mouseup', this.mu = e => this.onMouseUp(e));
-    window.addEventListener('mousemove', this.mv = e => this.onMouseMove(e));
-    cv.addEventListener('wheel', e => { e.preventDefault(); this.zoom(e.deltaY < 0 ? 1.1 : 1 / 1.1, e.clientX, e.clientY); }, { passive: false });
-    cv.addEventListener('dblclick', e => this.onDblClick(e));
-    document.documentElement.addEventListener('mouseleave', this.ml = () => { this.mouse.inside = false; });
-    window.addEventListener('blur', this.bl = () => { this.mouse.inside = false; this.keys = {}; });
-    window.addEventListener('keydown', this.kd = e => this.onKey(e, true));
-    window.addEventListener('keyup', this.ku = e => this.onKey(e, false));
-    const card = this.el.card;
-    card.addEventListener('pointerdown', e => {
-      const c = e.target.closest('.cell'); if (!c) return;
-      e.preventDefault();
-      this.pressCell(+c.dataset.i, e.shiftKey, e.button === 2);
-    });
-    card.addEventListener('mouseover', e => { const c = e.target.closest('.cell'); this.hoverCell = c ? +c.dataset.i : -1; this.showTip(c); });
-    card.addEventListener('mouseleave', () => { this.hoverCell = -1; this.el.tip.hidden = true; });
-    this.el.info.addEventListener('pointerdown', e => {
-      const t = e.target.closest('[data-sel]');
-      if (t) { const en = this.g.ent(+t.dataset.sel); if (en) { if (e.shiftKey) this.removeFromSel(en); else this.setSel([en]); } return; }
-      const q = e.target.closest('[data-cancel]');
-      if (q) { const b = this.g.ent(+q.dataset.b); if (b && b.owner === this.g.humanIdx) this.g.cancelQueue(b, +q.dataset.cancel); this.hudTimer = 0; }
-    });
-    const mmEv = e => {
-      const rect = this.mm.getBoundingClientRect();
-      const mx = (e.clientX - rect.left) * 240 / rect.width, my = (e.clientY - rect.top) * 120 / rect.height;
-      const k = 240 / (2 * this.g.n);
-      const u = (mx - 120) / k, v = my / (k / 2);
-      return { x: clamp((u + v) / 2, 0, this.g.n), y: clamp((v - u) / 2, 0, this.g.n) };
-    };
-    this.mm.addEventListener('mousedown', e => {
-      e.preventDefault(); e.stopPropagation();
-      const w = mmEv(e);
-      if (e.button === 2) { this.issueAt(w.x, w.y, null, e.shiftKey); return; }
-      if (this.cmdMode === 'attackmove') { this.doAttackMove(w.x, w.y, e.shiftKey); return; }
-      this.mmDrag = true; this.r.centerOn(w.x, w.y);
-    });
-    this.mm.addEventListener('mousemove', e => { if (this.mmDrag) { const w = mmEv(e); this.r.centerOn(w.x, w.y); } });
-    window.addEventListener('mouseup', this.mmu = () => { this.mmDrag = false; });
-    const q = s => this.root.querySelector(s);
-    q('#b-idle').onclick = () => this.cycleIdle(true);
-    q('#b-idlem').onclick = () => this.cycleIdle(false);
-    q('#b-speed').onclick = () => this.changeSpeed(1);
-    q('#b-pause').onclick = () => this.togglePause();
-    q('#b-menu').onclick = () => this.openMenu();
-    this.el.msgs.addEventListener('pointerdown', e => {
-      const m = e.target.closest('[data-x]'); if (m) this.r.centerOn(+m.dataset.x, +m.dataset.y);
-    });
-  }
-  destroy() {
-    window.removeEventListener('resize', this.onResize);
-    window.removeEventListener('mouseup', this.mu); window.removeEventListener('mousemove', this.mv);
-    window.removeEventListener('keydown', this.kd); window.removeEventListener('keyup', this.ku);
-    window.removeEventListener('mouseup', this.mmu);
-    window.removeEventListener('blur', this.bl);
-    document.documentElement.removeEventListener('mouseleave', this.ml);
-  }
-
-  // ------------------------------------------------------------------ seleção
-  setSel(list) {
-    this.sel = list.filter(e => e && !e.dead);
-    this.selSet = new Set(this.sel.map(e => e.id));
-    this.cmdMode = null; this.placing = null;
-    this.hudTimer = 0; this.cardSig = '';
-  }
-  removeFromSel(e) { this.setSel(this.sel.filter(x => x !== e)); }
-  own() { return this.sel.filter(e => !e.dead && e.owner === this.g.humanIdx); }
-  ownUnits() { return this.sel.filter(e => !e.dead && e.kind === 'unit' && e.owner === this.g.humanIdx); }
-  ownBlds() { return this.sel.filter(e => !e.dead && e.kind === 'building' && e.owner === this.g.humanIdx); }
-
-  // elemento sob um ponto da tela
-  pickAt(px, py) {
-    const g = this.g, r = this.r, z = r.cam.zoom;
-    let best = null, bd = 1e9;
-    for (const e of g.ents.values()) {
-      if (e.dead || (e.kind !== 'unit' && e.kind !== 'animal') || !g.canSee(e)) continue;
-      const s = r.worldToScreen(e.x, e.y, 10);
-      const rad = (e.kind === 'unit' && UNITS[e.type].scale ? 20 : 11) * z;
-      const dx = s.x - px, dy = (s.y - py) * 0.8;
-      const d = Math.hypot(dx, dy);
-      if (d < rad && d < bd) { bd = d; best = e; }
-    }
-    if (best) return best;
-    // construções: testa alturas do telhado
-    for (const e of g.buildings) {
-      if (e.dead || !g.canSee(e)) continue;
-      const H = e.type === 'tower' ? 60 : e.w * 11 + 8;
-      for (const f of (BUILDINGS[e.type].passable ? [0] : [0, 0.35, 0.7, 1])) {
-        const w = r.screenToWorld(px, py + f * H * z);
-        if (w.x >= e.tx && w.x <= e.tx + e.w && w.y >= e.ty && w.y <= e.ty + e.h) return e;
-      }
-    }
-    // recursos
-    const w0 = r.screenToWorld(px, py + 12 * z);
-    let bestR = null, br = 1e9;
-    g.gridRes.query(w0.x, w0.y, 2, e => {
-      if (e.dead || !g.canSee(e)) return;
-      const s = r.worldToScreen(e.x, e.y, 10);
-      const d = Math.hypot(s.x - px, (s.y - py) * 0.9);
-      if (d < 16 * z && d < br) { br = d; bestR = e; }
-    });
-    return bestR;
-  }
-
-  // ------------------------------------------------------------------ mouse
-  rel(e) { const rc = this.cv.getBoundingClientRect(); return { x: e.clientX - rc.left, y: e.clientY - rc.top }; }
-  onMouseDown(e) {
-    if (this.paused || this.g.over && this.overlayOpen) return;
-    const p = this.rel(e);
-    this.mouse.x = p.x; this.mouse.y = p.y;
-    if (e.button === 1) { this.pan = { x: p.x, y: p.y, cx: this.r.cam.x, cy: this.r.cam.y }; e.preventDefault(); return; }
-    if (e.button === 2) { this.onRightClick(p.x, p.y, e.shiftKey); return; }
-    if (e.button !== 0) return;
-    if (this.placing) { this.placeBuilding(e.shiftKey); return; }
-    if (this.cmdMode === 'attackmove') {
-      const w = this.r.screenToWorld(p.x, p.y);
-      this.doAttackMove(w.x, w.y, e.shiftKey); return;
-    }
-    this.drag = { x0: p.x, y0: p.y, x1: p.x, y1: p.y, shift: e.shiftKey };
-  }
-  onMouseMove(e) {
-    const p = this.rel(e);
-    this.mouse.x = p.x; this.mouse.y = p.y;
-    this.mouse.inside = e.clientX >= 0 && e.clientY >= 0 && e.clientX <= window.innerWidth && e.clientY <= window.innerHeight;
-    this.mouseWorld = this.r.screenToWorld(p.x, p.y);
-    if (this.pan) {
-      this.r.cam.x = this.pan.cx - (p.x - this.pan.x) / this.r.cam.zoom;
-      this.r.cam.y = this.pan.cy - (p.y - this.pan.y) / this.r.cam.zoom;
-      this.r.clampCam();
-    }
-    if (this.drag) { this.drag.x1 = p.x; this.drag.y1 = p.y; }
-  }
-  onMouseUp(e) {
-    if (e.button === 1) { this.pan = null; return; }
-    if (e.button !== 0 || !this.drag) return;
-    const d = this.drag; this.drag = null;
-    const w = Math.abs(d.x1 - d.x0), h = Math.abs(d.y1 - d.y0);
-    if (w < 6 && h < 6) {
-      const ent = this.pickAt(d.x0, d.y0);
-      if (ent) {
-        if (d.shift && this.sel.length && ent.owner === this.g.humanIdx && this.sel[0].owner === this.g.humanIdx && ent.kind === 'unit' && this.sel[0].kind === 'unit') {
-          if (this.selSet.has(ent.id)) this.removeFromSel(ent); else this.setSel(this.sel.concat([ent]));
-        } else this.setSel([ent]);
-        if (ent.owner === this.g.humanIdx) Sfx.play('select');
-      } else if (!d.shift) this.setSel([]);
-      return;
-    }
-    // seleção por caixa: unidades próprias
-    const x0 = Math.min(d.x0, d.x1), x1 = Math.max(d.x0, d.x1), y0 = Math.min(d.y0, d.y1), y1 = Math.max(d.y0, d.y1);
-    const out = [];
-    for (const u of this.g.units) {
-      if (u.dead || u.owner !== this.g.humanIdx) continue;
-      const s = this.r.worldToScreen(u.x, u.y, 10);
-      if (s.x >= x0 && s.x <= x1 && s.y >= y0 && s.y <= y1) out.push(u);
-    }
-    if (d.shift && this.sel.length && this.sel[0].kind === 'unit' && this.sel[0].owner === this.g.humanIdx) {
-      const set = new Set(this.sel.map(e => e.id));
-      for (const u of out) if (!set.has(u.id)) this.sel.push(u);
-      this.setSel(this.sel);
-    } else {
-      // prioriza militares se houver mistura
-      const mil = out.filter(u => u.type !== 'villager');
-      this.setSel(out.length > 1 && mil.length && mil.length < out.length && this.keys['ControlLeft'] ? mil : out);
-    }
-    if (out.length) Sfx.play('select');
-  }
-  onDblClick(e) {
-    const p = this.rel(e);
-    const ent = this.pickAt(p.x, p.y);
-    if (!ent || ent.owner !== this.g.humanIdx) return;
-    const out = [];
-    const list = ent.kind === 'unit' ? this.g.units : this.g.buildings;
-    for (const o of list) {
-      if (o.dead || o.owner !== ent.owner || o.type !== ent.type) continue;
-      const s = this.r.worldToScreen(o.x, o.y);
-      if (s.x >= 0 && s.x <= this.r.W && s.y >= 0 && s.y <= this.r.H) out.push(o);
-    }
-    this.setSel(out);
-  }
-  zoom(f, cx, cy) {
-    const r = this.r, before = r.screenToWorld(cx, cy);
-    r.cam.zoom = clamp(r.cam.zoom * f, 0.5, 1.7);
-    const after = r.screenToWorld(cx, cy);
-    // mantém o ponto sob o cursor
-    r.cam.x += (isoX(before.x, before.y) - isoX(after.x, after.y));
-    r.cam.y += (isoY(before.x, before.y) - isoY(after.x, after.y));
-    r.clampCam();
-  }
-
-  // ------------------------------------------------------------------ comandos
-  onRightClick(px, py, shift) {
-    if (this.placing) { this.placing = null; return; }
-    if (this.cmdMode) { this.cmdMode = null; return; }
-    const w = this.r.screenToWorld(px, py);
-    const ent = this.pickAt(px, py);
-    this.issueAt(w.x, w.y, ent, shift);
-  }
-  marker(x, y, color) { this.r.markers.push({ x, y, t: 0, color: color || '#ffffff' }); }
-  issueAt(x, y, ent, shift) {
-    const g = this.g, me = g.humanIdx;
-    x = clamp(x, 0.5, g.n - 0.5); y = clamp(y, 0.5, g.n - 0.5);
-    const units = this.ownUnits();
-    if (!units.length) {
-      const blds = this.ownBlds();
-      if (blds.length) {
-        // ponto de encontro
-        for (const b of blds) {
-          if (b.type === 'farm') continue;
-          const tg = ent && (ent.kind === 'res' || ent.kind === 'animal' || (ent.kind === 'building' && ent.owner === me)) ? ent : null;
-          g.cmdSetRally(b, tg ? tg.x : x, tg ? tg.y : y, tg);
-        }
-        this.marker(ent ? ent.x : x, ent ? ent.y : y, '#6fd3ff');
-        Sfx.play('click');
-      }
-      return;
-    }
-    Sfx.play('order');
-    if (ent && ent.id !== undefined) {
-      if ((ent.kind === 'unit' || ent.kind === 'building') && g.isEnemy(me, ent.owner)) {
-        g.cmdAttack(units, ent, shift);
-        this.marker(ent.x, ent.y, '#ff4a3a');
-        return;
-      }
-      if (ent.kind === 'res' || ent.kind === 'animal') {
-        const vil = units.filter(u => u.type === 'villager'), rest = units.filter(u => u.type !== 'villager');
-        if (vil.length) g.cmdGather(vil, ent, shift);
-        if (rest.length) g.cmdMove(rest, ent.x, ent.y, shift);
-        this.marker(ent.x, ent.y, '#ffe36a');
-        return;
-      }
-      if (ent.kind === 'building' && ent.owner === me) {
-        const vil = units.filter(u => u.type === 'villager'), rest = units.filter(u => u.type !== 'villager');
-        if (vil.length) {
-          if (ent.type === 'farm' && ent.complete) g.cmdGather(vil, ent, shift);
-          else if (!ent.complete || ent.hp < ent.maxhp - 1) g.cmdBuildOn(vil, ent, shift);
-          else g.cmdMove(vil, ent.x, ent.y + ent.h / 2 + 0.5, shift);
-        }
-        if (rest.length) g.cmdMove(rest, x, y, shift);
-        this.marker(ent.x, ent.y, '#7dff9a');
-        return;
-      }
-    }
-    g.cmdMove(units, x, y, shift);
-    this.marker(x, y, '#ffffff');
-  }
-  doAttackMove(x, y, shift) {
-    const units = this.ownUnits().filter(u => u.type !== 'villager' || true);
-    this.cmdMode = null;
-    if (!units.length) return;
-    this.g.cmdAttackMove(units, x, y, shift);
-    this.marker(x, y, '#ff6a4a');
-    Sfx.play('order');
-  }
-  placeBuilding(shift) {
-    const pl = this.placing, g = this.g;
-    if (!pl) return;
-    const vils = this.ownUnits().filter(u => u.type === 'villager');
-    if (!pl.ok) { Sfx.play('error'); return; }
-    if (!vils.length) { this.placing = null; return; }
-    const b = g.cmdBuild(vils, pl.type, pl.tx, pl.ty, this.keys['ShiftLeft'] || this.keys['ShiftRight'] || shift, g.humanIdx);
-    if (b) {
-      Sfx.play('place');
-      if (!(shift || this.keys['ShiftLeft'] || this.keys['ShiftRight'])) this.placing = null;
-      else if (!g.canAfford(g.human, g.buildCost(g.human, pl.type))) this.placing = null;
-    } else Sfx.play('error');
-  }
-
-  // ------------------------------------------------------------------ botões de comando
-  getCells() {
-    const g = this.g, p = g.human, cells = new Array(15).fill(null);
-    const own = this.own();
-    if (!own.length || p.eliminated) return cells;
-    const units = this.ownUnits(), blds = this.ownBlds();
-    if (this.placing) { cells[14] = { icon: '✖', label: 'Cancelar', tip: '<b>Cancelar</b> construção (Esc)', enabled: true, act: () => { this.placing = null; } }; return cells; }
-    if (units.length) {
-      const allVil = units.some(u => u.type === 'villager');
-      if (allVil) {
-        BUILD_ORDER.forEach((id, i) => {
-          const def = BUILDINGS[id];
-          const cost = g.buildCost(p, id);
-          const locked = def.age > p.age;
-          const ok = !locked && g.canAfford(p, cost);
-          cells[i] = {
-            icon: def.icon, name: def.name, enabled: ok, locked,
-            tip: '<b>' + def.name + '</b> <i>[' + HK[i] + ']</i><br>' + costHtml(cost, p) + (locked ? '<br><span class="bad">Requer ' + AGES[def.age].name + '</span>' : '') + '<br><span class="dim">' + def.desc + '</span>',
-            act: () => { if (!ok) { Sfx.play('error'); if (locked) g.notify(g.humanIdx, 'Requer ' + AGES[def.age].name, 'warn'); else g.notify(g.humanIdx, 'Recursos insuficientes', 'warn'); return; } this.placing = { type: id }; this.cmdMode = null; },
-          };
-        });
-      } else {
-        cells[0] = { icon: '⚔️', name: 'Atacar-mover', enabled: true, tip: '<b>Atacar-mover</b> <i>[Q]</i><br>As tropas avançam atacando tudo pelo caminho.', act: () => { this.cmdMode = 'attackmove'; } };
-      }
-      cells[14] = { icon: '⏹', name: 'Parar', enabled: true, tip: '<b>Parar</b> <i>[B]</i><br>Cancela as ordens atuais.', act: () => g.cmdStop(units) };
-      cells[13] = allVil ? cells[13] : { icon: '🗑️', name: 'Excluir', enabled: true, tip: '<b>Excluir unidades</b> <i>[Del]</i>', act: () => this.deleteSel() };
-      return cells;
-    }
-    // construções
-    const b = blds[0];
-    if (!b.complete) { cells[14] = { icon: '🗑️', name: 'Cancelar construção', enabled: true, tip: '<b>Cancelar construção</b><br>Devolve recursos.', act: () => this.deleteSel() }; return cells; }
-    const def = BUILDINGS[b.type];
-    let i = 0;
-    const units2 = b.type === 'castle' ? [CIVS[p.civ].unique] : (def.units || []);
-    for (const id of units2) {
-      const ud = UNITS[id], cost = g.unitCost(p, id);
-      const locked = ud.age > p.age, ok = !locked && g.canAfford(p, cost);
-      const idx = i++;
-      cells[idx] = {
-        icon: ud.icon, name: ud.name, enabled: ok, locked,
-        tip: '<b>' + (id === 'militia' && p.techs.has('manatarms') ? g.humanUnitName(p, id) : ud.name) + '</b> <i>[' + HK[idx] + ']</i> <small>(Shift: ×5)</small><br>' + costHtml(cost, p) + ' ⏱' + Math.round(g.prodTime(p, b.type, ud.time)) + 's' + (locked ? '<br><span class="bad">Requer ' + AGES[ud.age].name + '</span>' : '') + '<br><span class="dim">' + ud.desc + '</span><br>' + this.unitStatLine(ud),
-        act: (shift) => { const n = shift ? 5 : 1; let c = 0; for (let k = 0; k < n; k++) { for (const bb of blds) if (bb.type === b.type) { if (g.queueUnit(bb, id)) { c++; break; } } } if (!c) Sfx.play('error'); else Sfx.play('click'); },
-      };
-    }
-    if (def.market) {
-      let k = 0;
-      for (const r of ['food', 'wood', 'stone']) {
-        const pr = g.market[p.idx][r];
-        const buy = Math.ceil(pr * 1.3), sell = Math.floor(pr * 0.7);
-        cells[k] = { icon: '🛒' + RES_ICON[r], name: 'Comprar ' + RES_NAME[r], enabled: p.res.gold >= buy, tip: '<b>Comprar 100 ' + RES_NAME[r] + '</b><br>Custo: 🪙' + buy, act: () => { if (g.marketTrade(p, r, false)) Sfx.play('click'); else Sfx.play('error'); } };
-        cells[k + 5] = { icon: '💱' + RES_ICON[r], name: 'Vender ' + RES_NAME[r], enabled: p.res[r] >= 100, tip: '<b>Vender 100 ' + RES_NAME[r] + '</b><br>Ganho: 🪙' + sell, act: () => { if (g.marketTrade(p, r, true)) Sfx.play('click'); else Sfx.play('error'); } };
-        k++;
-      }
-      return cells;
-    }
-    const techs = (TECH_BY_BLD[b.type] || []).filter(id => !p.techs.has(id) && !(TECHS[id].ageUp && TECHS[id].ageUp !== p.age + 1));
-    for (const id of techs) {
-      if (i >= 14) break;
-      const t = TECHS[id], cost = g.techCost(p, id);
-      const avail = g.techAvailable(p, id);
-      const ok = avail && g.canAfford(p, cost);
-      const idx = i++;
-      let why = '';
-      if (!avail) { if (p.inProgress.has(id)) why = 'Em pesquisa'; else if (t.req && t.req.some(r => !p.techs.has(r))) why = 'Requer ' + t.req.filter(r => !p.techs.has(r)).map(r => TECHS[r].name).join(', '); else if (p.age < t.age) why = 'Requer ' + AGES[t.age].name; }
-      if (t.ageUp && avail && !g.ageReqMet(p, t.ageUp)) why = 'Requer: ' + AGE_REQ[t.ageUp].from.map(x => BUILDINGS[x].name).join(' / ') + ' (' + AGE_REQ[t.ageUp].n + ')';
-      cells[idx] = {
-        icon: t.icon, name: t.name, enabled: ok && !why, locked: !avail || !!why,
-        tip: '<b>' + t.name + '</b> <i>[' + HK[idx] + ']</i><br>' + costHtml(cost, p) + ' ⏱' + t.time + 's' + (why ? '<br><span class="bad">' + why + '</span>' : '') + '<br><span class="dim">' + t.desc + '</span>',
-        act: () => { if (!g.queueTech(b, id)) Sfx.play('error'); else Sfx.play('click'); },
-      };
-    }
-    cells[14] = { icon: '🗑️', name: 'Excluir', enabled: true, tip: '<b>Excluir edifício</b> <i>[Del]</i>', act: () => this.deleteSel() };
-    return cells;
-  }
-  unitStatLine(ud) {
-    return '<span class="dim">PV ' + ud.hp + ' · Atq ' + ud.atk + ' · Arm ' + ud.armor[0] + '/' + ud.armor[1] + (ud.range ? ' · Alc ' + ud.range : '') + '</span>';
-  }
-  pressCell(i, shift, right) {
-    const c = this.cells[i];
-    if (!c) return;
-    c.act(shift);
-    this.hudTimer = 0; this.cardSig = '';
-  }
-  showTip(el) {
-    const tip = this.el.tip;
-    if (!el || !this.cells[+el.dataset.i]) { tip.hidden = true; return; }
-    const c = this.cells[+el.dataset.i];
-    tip.innerHTML = c.tip || c.name || '';
-    tip.hidden = false;
-    const rc = el.getBoundingClientRect();
-    tip.style.left = Math.max(4, Math.min(window.innerWidth - 270, rc.left - 120)) + 'px';
-    tip.style.top = (rc.top - tip.offsetHeight - 8) + 'px';
-  }
-
-  deleteSel() {
-    const g = this.g;
-    for (const e of this.own()) {
-      if (e.kind === 'building' && !e.complete) { g.refund(g.human, g.buildCost(g.human, e.type)); g.kill(e, null); this.events_noMsg = true; }
-      else g.kill(e, null);
-    }
-    this.setSel([]);
-  }
-
-  cycleIdle(vil) {
-    const g = this.g, p = g.human;
-    const list = p.units.filter(u => !u.dead && !u.order && (vil ? u.type === 'villager' : (u.type !== 'villager' && u.type !== 'king')));
-    if (!list.length) { g.notify(g.humanIdx, vil ? 'Nenhum aldeão ocioso' : 'Nenhum soldado ocioso', 'info'); return; }
-    const k = vil ? 'idleVil' : 'idleMil';
-    this.cycle[k] = (this.cycle[k] + 1) % list.length;
-    const u = list[this.cycle[k]];
-    this.setSel([u]);
-    this.r.centerOn(u.x, u.y);
-  }
-  changeSpeed(dir) {
-    const sp = [1, 1.7, 2.5, 4];
-    let i = sp.indexOf(this.g.speedMul);
-    if (i < 0) i = 1;
-    i = (i + dir + sp.length) % sp.length;
-    this.g.speedMul = sp[i];
-    g_notify(this.g, 'Velocidade do jogo: ' + sp[i] + 'x');
-  }
-  togglePause() { this.paused = !this.paused; this.root.querySelector('#b-pause').textContent = this.paused ? '▶' : '⏸'; if (this.paused) this.showBanner('PAUSADO'); else this.el.banner.hidden = true; }
-  showBanner(t) { this.el.banner.textContent = t; this.el.banner.hidden = false; }
-
-  // ------------------------------------------------------------------ teclado
-  onKey(e, down) {
-    if (!this.root || this.root.hidden) return;
-    this.keys[e.code] = down;
-    if (!down) return;
-    if (this.overlayOpen) { if (e.code === 'Escape' && this.menuOpen) this.closeOverlay(); return; }
-    const g = this.g;
-    const ctrl = e.ctrlKey || e.metaKey;
-    if (e.code === 'Escape') {
-      if (this.placing) this.placing = null;
-      else if (this.cmdMode) this.cmdMode = null;
-      else this.openMenu();
-      e.preventDefault(); return;
-    }
-    if (this.paused && e.code !== 'KeyP') return;
-    if (e.code.startsWith('Digit')) {
-      const n = +e.code.slice(5);
-      if (ctrl) { this.groups[n] = this.own().map(x => x.id); e.preventDefault(); g.notify(g.humanIdx, 'Grupo ' + n + ' definido', 'info'); return; }
-      const ids = (this.groups[n] || []).map(id => g.ent(id)).filter(Boolean);
-      if (ids.length) {
-        const now = performance.now();
-        this.setSel(ids);
-        if (this.lastGroup === n && now - this.lastGroupT < 400) this.r.centerOn(ids[0].x, ids[0].y);
-        this.lastGroup = n; this.lastGroupT = now;
-      }
-      e.preventDefault(); return;
-    }
-    if (e.code in HK_CODES && !ctrl) {
-      const c = this.cells[HK_CODES[e.code]];
-      if (c) { this.pressCell(HK_CODES[e.code], e.shiftKey); e.preventDefault(); }
-      return;
-    }
-    switch (e.code) {
-      case 'Period': this.cycleIdle(true); break;
-      case 'Comma': this.cycleIdle(false); break;
-      case 'KeyH': { const tc = g.human.blds.find(b => b.type === 'towncenter' && !b.dead); if (tc) { this.setSel([tc]); this.r.centerOn(tc.x, tc.y); } break; }
-      case 'KeyP': this.togglePause(); break;
-      case 'Delete': this.deleteSel(); break;
-      case 'Equal': case 'NumpadAdd': this.changeSpeed(1); break;
-      case 'Minus': case 'NumpadSubtract': this.changeSpeed(-1); break;
-      case 'Space': { const p = g.human.lastHitPos; if (p) this.r.centerOn(p.x, p.y); e.preventDefault(); break; }
-      case 'KeyM': this.root.classList.toggle('nomm'); break;
-      case 'KeyI': if (ctrl) { e.preventDefault(); } break;
-      case 'Tab': e.preventDefault(); break;
-      default:
-    }
-  }
-
-  // ------------------------------------------------------------------ atualização por frame
-  update(dt, ts) {
-    const g = this.g, cam = this.r.cam;
-    // rolagem
-    const sp = 760 / cam.zoom * dt;
-    let vx = 0, vy = 0;
-    const k = this.keys;
-    if (k.ArrowLeft) vx -= 1; if (k.ArrowRight) vx += 1; if (k.ArrowUp) vy -= 1; if (k.ArrowDown) vy += 1;
-    if (this.mouse.inside && !this.drag && !this.paused && !this.overlayOpen && document.hasFocus()) {
-      const m = this.mouse, W = this.r.W, H = this.r.H;
-      if (m.x <= 3) vx -= 1; if (m.x >= W - 4) vx += 1; if (m.y <= 3) vy -= 1; if (m.y >= H - 4) vy += 1;
-    }
-    if (vx || vy) { cam.x += vx * sp * 1.6; cam.y += vy * sp * 1.0; this.r.clampCam(); }
-    if (this.mouse.inside) this.mouseWorld = this.r.screenToWorld(this.mouse.x, this.mouse.y);
-    // remove mortos da seleção
-    if (this.sel.some(e => e.dead)) { this.sel = this.sel.filter(e => !e.dead); this.selSet = new Set(this.sel.map(e => e.id)); this.hudTimer = 0; }
-    // eventos do jogo
-    this.consumeEvents();
-    this.hudTimer -= dt;
-    this.updateTop();
-    if (this.hudTimer <= 0) { this.hudTimer = 0.2; this.renderInfo(); this.renderCard(); }
-    this.drawMinimap();
-    this.updateMsgs(dt);
-    if (this.hooks.update) this.hooks.update(dt);
-  }
-
-  updateTop() {
-    const g = this.g, p = g.human, q = s => this.root.querySelector(s);
-    const cnt = { food: 0, wood: 0, gold: 0, stone: 0 };
-    let idle = 0, idleMil = 0;
-    for (const u of p.units) {
-      if (u.dead) continue;
-      if (u.type === 'villager') {
-        if (!u.order) idle++;
-        else if (u.order.type === 'gather' && u.order.rkey) cnt[RKEY_RES[u.order.rkey]]++;
-      } else if (u.type !== 'king' && !u.order) idleMil++;
-    }
-    for (const r of RESOURCES) {
-      const el = q('#r-' + r);
-      el.children[1].textContent = Math.floor(p.res[r]);
-      el.children[2].textContent = cnt[r];
-    }
-    const pe = q('#r-pop');
-    pe.children[1].textContent = p.pop + '/' + p.popCap;
-    pe.classList.toggle('warnr', p.pop >= p.popCap);
-    q('#r-age').textContent = AGES[p.age].icon + ' ' + AGES[p.age].name;
-    q('#r-time').textContent = fmtTime(g.time);
-    q('#b-idle').children[0].textContent = idle; q('#b-idle').classList.toggle('on', idle > 0);
-    q('#b-idlem').children[0].textContent = idleMil;
-    q('#b-speed').textContent = g.speedMul + 'x';
-  }
-
-  consumeEvents() {
-    const g = this.g;
-    const ev = g.events; g.events = [];
-    for (const e of ev) {
-      if (e.type === 'sfx') {
-        if (e.x !== undefined) {
-          const s = this.r.worldToScreen(e.x, e.y);
-          if (s.x < 0 || s.y < 0 || s.x > this.r.W || s.y > this.r.H) continue;
-        }
-        if (e.owner !== undefined && e.owner !== g.humanIdx && e.sfx !== 'age') continue;
-        Sfx.play(e.sfx);
-      } else if (e.type === 'over') {
-        this.showEnd(e.over);
-      } else if (e.text) {
-        this.addMsg(e.text, e.kind, e.x, e.y);
-        if (e.x !== undefined && (e.kind === 'bad')) this.pings.push({ x: e.x, y: e.y, t: 0 });
-      }
-    }
-  }
-  addMsg(text, kind, x, y) {
-    if (this.msgs.length && this.msgs[this.msgs.length - 1].text === text && this.msgs[this.msgs.length - 1].t < 2) return;
-    this.msgs.push({ text, kind, x, y, t: 0 });
-    if (this.msgs.length > 7) this.msgs.shift();
-    this.msgDirty = true;
-  }
-  updateMsgs(dt) {
-    let ch = this.msgDirty; this.msgDirty = false;
-    for (const m of this.msgs) m.t += dt;
-    const before = this.msgs.length;
-    this.msgs = this.msgs.filter(m => m.t < 8);
-    if (this.msgs.length !== before) ch = true;
-    if (ch) {
-      this.el.msgs.innerHTML = this.msgs.map(m => '<div class="m ' + (m.kind || '') + '"' + (m.x !== undefined ? ' data-x="' + m.x + '" data-y="' + m.y + '"' : '') + '>' + m.text + '</div>').join('');
-    }
-  }
-
-  // ------------------------------------------------------------------ painel de informações
-  renderInfo() {
-    const g = this.g, p = g.human, el = this.el.info;
-    const sel = this.sel;
-    let html = '';
-    if (!sel.length) {
-      html = '<div class="idle"><h3>' + CIVS[p.civ].flag + ' ' + CIVS[p.civ].name + '</h3><p class="dim">' + CIVS[p.civ].bonuses.join('<br>') + '</p><p class="dim">Selecione unidades ou edifícios. Clique direito para comandar.</p></div>';
-    } else if (sel.length === 1) {
-      const e = sel[0];
-      const own = e.owner === g.humanIdx;
-      if (e.kind === 'unit') {
-        const d = UNITS[e.type], s = e.s;
-        const pl = g.players[e.owner];
-        html = '<div class="one"><div class="portrait" style="border-color:' + pl.color + '">' + d.icon + '</div><div class="det"><h3>' + s.name + '</h3>'
-          + '<div class="hpbar"><i style="width:' + Math.max(0, e.hp / e.maxhp * 100) + '%"></i><span>' + Math.ceil(e.hp) + ' / ' + e.maxhp + '</span></div>'
-          + '<div class="stats">' + (s.atk > 0 ? '<span title="Ataque">⚔️ ' + Math.round(s.atk) + '</span>' : '') + '<span title="Armadura corpo a corpo / perfurante">🛡️ ' + s.armorM + '/' + s.armorP + '</span>'
-          + (s.range ? '<span title="Alcance">🎯 ' + s.range + '</span>' : '') + '<span title="Visão">👁️ ' + Math.round(s.los) + '</span><span title="Velocidade">👟 ' + s.speed.toFixed(2) + '</span></div>'
-          + (e.carry && e.carry.n > 0.5 ? '<div class="carry">Carregando: ' + RES_ICON[e.carry.res] + ' ' + Math.floor(e.carry.n) + '</div>' : '')
-          + '<div class="own" style="color:' + pl.color + '">' + (own ? '' : pl.name + ' (' + CIVS[pl.civ].name + ')') + '</div></div></div>';
-      } else if (e.kind === 'res' || e.kind === 'animal') {
-        const nm = e.kind === 'animal' ? RES_LABEL.deer : RES_LABEL[e.type];
-        const ic = { tree: '🌳', gold: '🪙', stone: '🪨', berry: '🫐', carcass: '🥩' }[e.type] || '🦌';
-        const food = e.kind === 'animal' ? e.food : e.amount;
-        const kind = e.kind === 'animal' ? 'food' : e.res;
-        html = '<div class="one"><div class="portrait" style="border-color:#6b5632">' + ic + '</div><div class="det"><h3>' + nm + '</h3>'
-          + '<div class="carry">' + RES_ICON[kind] + ' ' + RES_NAME[kind] + ': ' + Math.ceil(food) + '</div>'
-          + '<p class="dim" style="margin:6px 0">Selecione aldeões e clique com o botão direito para coletar.</p></div></div>';
-      } else if (e.kind === 'building') {
-        const d = BUILDINGS[e.type], pl = g.players[e.owner];
-        html = '<div class="one"><div class="portrait" style="border-color:' + pl.color + '">' + d.icon + '</div><div class="det"><h3>' + d.name + '</h3>'
-          + '<div class="hpbar"><i style="width:' + Math.max(0, e.hp / e.maxhp * 100) + '%"></i><span>' + Math.ceil(e.hp) + ' / ' + e.maxhp + '</span></div>';
-        if (!e.complete) html += '<div class="carry">Em construção: ' + Math.floor(e.progress * 100) + '%</div>';
-        else if (e.type === 'farm') html += '<div class="carry">Comida restante: ' + RES_ICON.food + Math.ceil(e.amount) + '</div>';
-        else if (d.pop) html += '<div class="carry">+' + d.pop + ' população</div>';
-        if (e.s.atk > 0) html += '<div class="stats"><span>⚔️ ' + e.s.atk + '</span><span>🎯 ' + e.s.range + '</span><span>🛡️ ' + e.s.armorM + '/' + e.s.armorP + '</span></div>';
-        if (!own) html += '<div class="own" style="color:' + pl.color + '">' + pl.name + ' (' + CIVS[pl.civ].name + ')</div>';
-        html += '</div></div>';
-        if (own && e.queue.length) {
-          html += '<div class="queue">';
-          e.queue.forEach((it, i) => {
-            const ic = it.k === 'unit' ? UNITS[it.id].icon : TECHS[it.id].icon;
-            const nm = it.k === 'unit' ? UNITS[it.id].name : TECHS[it.id].name;
-            html += '<div class="qi" title="' + nm + ' (clique para cancelar)" data-cancel="' + i + '" data-b="' + e.id + '">' + ic + (i === 0 ? '<u style="width:' + (100 - it.t / it.total * 100) + '%"></u>' : '') + '</div>';
-          });
-          html += '</div>';
-        }
-      }
-    } else {
-      html = '<div class="multi">';
-      for (const e of sel.slice(0, 40)) {
-        const ic = e.kind === 'unit' ? UNITS[e.type].icon : BUILDINGS[e.type].icon;
-        html += '<div class="mi" data-sel="' + e.id + '" title="' + (e.kind === 'unit' ? e.s.name : BUILDINGS[e.type].name) + '">' + ic + '<u style="width:' + Math.max(0, e.hp / e.maxhp * 100) + '%"></u></div>';
-      }
-      html += '</div><div class="dim" style="padding:2px 8px">' + sel.length + ' selecionados</div>';
-    }
-    if (el.dataset.sig !== html) { el.innerHTML = html; el.dataset.sig = html; }
-    // recurso / animal selecionado (informativo)
-  }
-
-  renderCard() {
-    this.cells = this.getCells();
-    const sig = this.cells.map(c => c ? (c.icon + (c.enabled ? 1 : 0) + (c.locked ? 'L' : '') + (c.name || '')) : '.').join('|') + (this.cmdMode || '') + (this.placing ? 'P' : '');
-    if (sig !== this.cardSig) {
-      this.cardSig = sig;
-      this.el.card.innerHTML = this.cells.map((c, i) => c
-        ? '<div class="cell ' + (c.enabled ? '' : 'dis') + (c.locked ? ' lock' : '') + (this.cmdMode === 'attackmove' && i === 0 ? ' active' : '') + '" data-i="' + i + '"><span class="ico">' + c.icon + '</span><span class="hk">' + HK[i] + '</span>' + (c.locked ? '<span class="lk">🔒</span>' : '') + '</div>'
-        : '<div class="cell empty"></div>').join('');
-    }
-    if (this.hoverCell >= 0 && !this.el.tip.hidden) {
-      const c = this.cells[this.hoverCell];
-      if (c) this.el.tip.innerHTML = c.tip || c.name; else this.el.tip.hidden = true;
-    }
-  }
-
-  // ------------------------------------------------------------------ minimapa
-  drawMinimap() {
-    const g = this.g, n = g.n, ctx = this.mmCtx;
-    const W = 240, H = 120, k = W / (2 * n);
-    if (this.mmDraw <= 0) {
-      this.mmDraw = 0.5;
-      const d = this.mmImg.data, w = g.world;
-      for (let i = 0; i < n * n; i++) {
-        let r, gg, b;
-        const t = w.terrain[i];
-        if (t === T_WATER) { r = 40; gg = 90; b = 160; }
-        else if (t === T_DIRT) { r = 120; gg = 100; b = 60; }
-        else { r = 52; gg = 110; b = 44; }
-        const o = w.occ[i];
-        if (o) {
-          const e = g.ents.get(o);
-          if (e) {
-            if (e.kind === 'res') {
-              if (e.type === 'tree') { r = 22; gg = 70; b = 28; } else if (e.type === 'gold') { r = 240; gg = 200; b = 50; } else if (e.type === 'stone') { r = 150; gg = 150; b = 160; } else if (e.type === 'berry') { r = 200; gg = 50; b = 70; }
-            } else if (e.kind === 'building') {
-              if (g.canSee(e)) { const c = parseInt(g.players[e.owner].color.slice(1), 16); r = c >> 16; gg = (c >> 8) & 255; b = c & 255; }
-            }
-          }
-        }
-        d[i * 4] = r; d[i * 4 + 1] = gg; d[i * 4 + 2] = b; d[i * 4 + 3] = 255;
-      }
-      this.mmTerrCtx.putImageData(this.mmImg, 0, 0);
-    }
-    this.mmDraw -= 1 / 60;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
-    ctx.setTransform(k, k / 2, -k, k / 2, W / 2, 0);
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(this.mmTerr, 0, 0, n, n);
-    if (g.st.fog !== false) { ctx.imageSmoothingEnabled = true; ctx.drawImage(this.r.fogCv, 0, 0, n, n); }
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    const mp = (x, y) => [(x - y) * k + W / 2, (x + y) * k / 2];
-    // unidades
-    for (const u of g.units) {
-      if (u.dead || !g.canSee(u)) continue;
-      const [x, y] = mp(u.x, u.y);
-      ctx.fillStyle = g.players[u.owner].color;
-      ctx.fillRect(x - 1, y - 1, 2.2, 2.2);
-    }
-    // alertas
-    for (let i = this.pings.length - 1; i >= 0; i--) {
-      const p = this.pings[i]; p.t += 1 / 60;
-      if (p.t > 3) { this.pings.splice(i, 1); continue; }
-      const [x, y] = mp(p.x, p.y);
-      ctx.strokeStyle = 'rgba(255,60,50,' + (1 - p.t / 3) + ')'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(x, y, 3 + (p.t * 8) % 12, 0, 6.2832); ctx.stroke();
-    }
-    // área visível
-    const r = this.r;
-    const cs = [r.screenToWorld(0, 0), r.screenToWorld(r.W, 0), r.screenToWorld(r.W, r.H), r.screenToWorld(0, r.H)];
-    ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 1; ctx.beginPath();
-    cs.forEach((c, i) => { const [x, y] = mp(clamp(c.x, 0, n), clamp(c.y, 0, n)); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
-    ctx.closePath(); ctx.stroke();
-  }
-
-  // ------------------------------------------------------------------ fim de jogo / menu
-  get overlayOpen() { return !this.el.overlay.hidden; }
-  closeOverlay() { this.el.overlay.hidden = true; this.menuOpen = false; this.paused = this.wasPaused; this.el.banner.hidden = !this.paused; }
-  openMenu() {
-    if (this.overlayOpen) return;
-    this.wasPaused = this.paused; this.paused = true; this.menuOpen = true;
-    const o = this.el.overlay;
-    o.hidden = false;
-    o.innerHTML = '<div class="dlg"><h2>Menu do Jogo</h2>'
-      + '<button data-a="resume">Continuar</button>'
-      + '<div class="row"><label>Velocidade</label><select id="sp">' + [1, 1.7, 2.5, 4].map(s => '<option ' + (s === this.g.speedMul ? 'selected' : '') + ' value="' + s + '">' + s + 'x</option>').join('') + '</select></div>'
-      + '<div class="row"><label>Som</label><input type="checkbox" id="snd" ' + (Sfx.enabled ? 'checked' : '') + '></div>'
-      + '<div class="row"><label>Neblina de guerra</label><span class="dim">' + (this.g.st.fog === false ? 'desligada' : 'ligada') + '</span></div>'
-      + '<button data-a="restart">Reiniciar partida</button><button data-a="quit" class="danger">Sair para o menu</button></div>';
-    o.querySelector('#sp').onchange = e => { this.g.speedMul = +e.target.value; };
-    o.querySelector('#snd').onchange = e => { Sfx.enabled = e.target.checked; };
-    o.onclick = e => {
-      const a = e.target.dataset.a;
-      if (a === 'resume') this.closeOverlay();
-      else if (a === 'restart') { if (this.hooks.restart) this.hooks.restart(); }
-      else if (a === 'quit') { if (this.hooks.quit) this.hooks.quit(); }
-    };
-  }
-  showEnd(over) {
-    const g = this.g;
-    const o = this.el.overlay;
-    this.overlayOpen2 = true;
-    this.wasPaused = false;
-    this.menuOpen = false;
-    o.hidden = false;
-    let rows = '';
-    const score = p => Math.round(p.stats.kills * 5 + p.stats.built * 3 + p.stats.trained + (p.stats.gathered.food + p.stats.gathered.wood + p.stats.gathered.gold + p.stats.gathered.stone) / 60 + p.stats.techs * 8);
-    for (const p of g.players) {
-      rows += '<tr style="color:' + p.color + '"><td>' + p.name + '</td><td>' + CIVS[p.civ].name + '</td><td>' + (p.eliminated ? '☠️' : '✔') + '</td><td>' + p.stats.kills + '</td><td>' + p.stats.lost + '</td><td>' + p.stats.built + '</td><td>' + p.stats.trained + '</td><td>' + Math.floor(p.stats.gathered.food + p.stats.gathered.wood + p.stats.gathered.gold + p.stats.gathered.stone) + '</td><td>' + score(p) + '</td></tr>';
-    }
-    o.innerHTML = '<div class="dlg wide ' + (over.win ? 'win' : 'lose') + '"><h1>' + (over.win ? '🏆 Vitória!' : '💀 Derrota') + '</h1>'
-      + '<p class="dim">Duração: ' + fmtTime(over.time) + '</p>'
-      + '<table><tr><th>Jogador</th><th>Civ.</th><th></th><th>Abates</th><th>Perdas</th><th>Construções</th><th>Treinadas</th><th>Recursos</th><th>Pontos</th></tr>' + rows + '</table>'
-      + '<div class="btns"><button data-a="watch">Continuar observando</button><button data-a="again">Jogar novamente</button><button data-a="quit" class="danger">Menu principal</button></div></div>';
-    o.onclick = e => {
-      const a = e.target.dataset.a;
-      if (a === 'watch') { o.hidden = true; this.g.over.reveal = true; this.g.over.watch = true; this.g.updateVision(true); this.hudTimer = 0; }
-      else if (a === 'again') { if (this.hooks.restart) this.hooks.restart(); }
-      else if (a === 'quit') { if (this.hooks.quit) this.hooks.quit(over); }
-    };
-    if (this.hooks.over) this.hooks.over(over);
-    Sfx.play(over.win ? 'win' : 'lose');
+// ---- Mundo
+function tabMundo(v) {
+  const c = Game.me, w = Game.w;
+  const sh = w.shock;
+  v.innerHTML = `
+    <section class="card tight">
+      <div class="grid2">
+        ${statCard('Preço das commodities', nf(w.commPrice, 0), w.commPrice > 110 ? 'em alta' : w.commPrice < 90 ? 'em baixa' : 'estável')}
+        ${statCard('Crescimento global', nf(w.globalG, 1) + '%', sh ? sh.name : 'sem crise')}
+      </div>
+      <p class="dim">Poder = PIB 40% · tecnologia 20% · militar 15% · influência 10% · qualidade de vida 15%. Toque em um país para ver detalhes e diplomacia.</p>
+    </section>
+    <section class="card tight rank">
+      ${w.rankList.map(o => { const d = (o.prevRank || o.rank) - o.rank; return `<div class="rrow ${o.id === c.id ? 'me' : ''} ${o.rank <= c.goal ? 'intop' : ''}" data-c="${o.id}"><b class="n">${o.rank}</b><span class="fl">${o.flag}</span><div class="nm">${o.name}<small>${fmtGdp(o.pop * o.gdpPc)} · tec ${nf(o.tech, 0)}</small></div><span class="pw">${nf(o.power, 0)}</span><span class="dl ${d > 0 ? 'good' : d < 0 ? 'bad' : ''}">${d > 0 ? '▲' + d : d < 0 ? '▼' + -d : '–'}</span></div>`; }).join('')}
+    </section>`;
+}
+async function countryModal(id) {
+  const c = Game.me, w = Game.w, o = w.byId[id];
+  const mine = id === c.id;
+  const rel = mine ? 100 : w.rel[c.id][o.id];
+  const deal = mine ? { ok: false } : dealCheck(c, w, o), tt = mine ? { ok: false } : techCheck(c, w, o);
+  const wc = mine ? { ok: false } : warCheck(c, w, o);
+  const html = `<div class="chead"><span class="flagbig">${o.flag}</span><div><h2>${o.name}</h2><small>#${o.rank} em poder · ${fmtGdp(o.pop * o.gdpPc)} · ${fmtPop(o.pop)}</small></div></div>
+    <div class="grid2 s">${statCard('PIB per capita', 'US$ ' + nf(o.gdpPc, 1) + ' mil')}${statCard('Crescimento', sign(o.g) + '%')}${statCard('Tecnologia', nf(o.tech, 0))}${statCard('Força militar', nf(o.mil, 0))}${statCard('Educação', nf(o.edu, 0))}${statCard('Influência', nf(o.influence, 0))}</div>
+    ${mine ? '' : `<p class="center">Relação com você: <b>${nf(rel, 0)}</b>/100 ${bar(rel, 100, rel > 55 ? 'good' : rel > 40 ? 'mid' : 'bad')}</p><p class="dim center">${c.ag.indexOf(o.id) >= 0 ? '🤝 Acordo comercial em vigor.' : ''}</p>`}`;
+  const btns = mine ? [{ label: 'Fechar' }] : [
+    { label: '🤝 Acordo comercial', hint: deal.ok ? '⭐2 · +crescimento, +influência' : deal.why, dis: !deal.ok },
+    { label: '🔬 Transferência de tecnologia', hint: tt.ok ? '⭐3 · +4 tecnologia · dívida +1,5%' : tt.why, dis: !tt.ok },
+    { label: '⚔️ Declarar guerra', hint: wc.ok ? `⭐4 · força relativa ${nf(warStrength(c) / warStrength(o) * 100, 0)}% · 🎖️+ 🎓−` : wc.why, dis: !wc.ok, cls: 'danger' },
+    { label: 'Fechar', cls: 'ghost' }];
+  const i = await modal(html, btns, { dismiss: true });
+  if (mine) return;
+  if (i === 0) { const r = makeDeal(c, w, o); if (r.ok) { toast('Acordo comercial assinado com ' + o.name, 'good'); w.log.push({ year: w.year, icon: '🤝', text: 'Acordo comercial com ' + o.name }); } renderTab(); refreshHud(); }
+  if (i === 1) { const r = techTransfer(c, w, o); if (r.ok) toast('Tecnologia transferida: +4', 'good'); renderTab(); refreshHud(); }
+  if (i === 2) {
+    const ok = await modal(`<div class="evt"><h2>⚔️ Declarar guerra a ${o.name}?</h2><p>Guerra custa vidas, dinheiro e apoio popular. Você decidirá a estratégia a cada ano. Força relativa estimada: <b>${nf(warStrength(c) / warStrength(o) * 100, 0)}%</b>.</p></div>`, [{ label: 'Declarar guerra', cls: 'danger' }, { label: 'Cancelar', cls: 'ghost' }]);
+    if (ok === 0) { declareWar(c, w, o); toast('Guerra declarada!', 'bad'); Game.save(); render(); }
   }
 }
 
-function g_notify(g, text) { g.events.push({ text, kind: 'info' }); }
-Game.prototype.humanUnitName = function (p, id) { const u = this.units.find(x => x.type === id && x.owner === p.idx); return u ? u.s.name : UNITS[id].name; };
+// ---------------------------------------------------------------- fluxo do ano
+function deltaTag(s) {
+  if (s.f === 'rank') return s.d === 0 ? '–' : `<span class="${s.d > 0 ? 'good' : 'bad'}">${s.d > 0 ? '▲' : '▼'}${Math.abs(s.d)}</span>`;
+  const good = s.inv ? s.d < 0 : s.d > 0;
+  const v = s.f === 'pct' ? sign(s.d, 1) + ' pt' : sign(s.d, 1) + '%';
+  return `<span class="${Math.abs(s.d) < 0.05 ? '' : good ? 'good' : 'bad'}">${v}</span>`;
+}
+async function showReport(r) {
+  const val = s => s.f === 'gdp' ? fmtGdp(s.v) : s.f === 'pop' ? fmtPop(s.v) : s.f === 'rank' ? '#' + s.v : nf(s.v, 0) + '%';
+  const html = `<div class="paper"><div class="mast">O DIÁRIO DA NAÇÃO<small>${r.year} · edição anual</small></div>
+    <div class="headline"><span>${r.head.icon}</span><h2>${r.head.text}</h2></div>
+    <div class="grid3">${r.stats.map(s => `<div class="rs"><small>${s.k}</small><b>${val(s)}</b>${deltaTag(s)}</div>`).join('')}</div>
+    ${r.bullets.length ? `<ul class="blt">${r.bullets.map(b => `<li>${b}</li>`).join('')}</ul>` : ''}
+    ${r.tips.slice(0, 2).map(t => `<div class="advisor"><span class="av">${ADVISORS[t.who].icon}</span><div><b>${ADVISORS[t.who].name}</b><p>${t.text}</p></div></div>`).join('')}</div>`;
+  await modal(html, [{ label: 'Continuar' }]);
+}
+async function showEvent(ev) {
+  const a = ADVISORS[ev.who];
+  const html = `<div class="evt"><div class="advisor big"><span class="av">${a.icon}</span><div><b>${a.name}</b><small>${a.role}</small></div></div><h2>${ev.icon} ${ev.title}</h2><p>${ev.text}</p></div>`;
+  const i = await modal(html, ev.ch.map(x => ({ label: x.t, hint: x.h })), { cls: 'event' });
+  const res = Game.choose(ev, i);
+  await modal(`<div class="evt"><h3>${ev.icon} ${ev.title}</h3><p class="result">${res}</p></div>`, [{ label: 'Entendido' }]);
+}
+async function showElection(e) {
+  const c = Game.me;
+  const html = `<div class="evt center"><div class="bigicon">🗳️</div><h2>Eleições ${e.year}</h2><p>Com a aprovação em ${nf(c.approval, 0)}%, os cidadãos ${de(c)} vão às urnas...</p></div>`;
+  await modal(html, [{ label: 'Ver resultado' }]);
+  const res = e.won ? `<div class="evt center win"><div class="bigicon">🎉</div><h2>Reeleito!</h2><p>Você conquistou <b>${nf(e.vote, 0)}%</b> dos votos e ganha mais ${TERM} anos de mandato.</p></div>` : `<div class="evt center lose"><div class="bigicon">💔</div><h2>Derrota nas urnas</h2><p>Você obteve apenas <b>${nf(e.vote, 0)}%</b> dos votos.</p></div>`;
+  await modal(res, [{ label: 'Continuar' }]);
+}
+async function showEnd(summary) {
+  const c = Game.me, w = Game.w;
+  const html = `<div class="evt center ${summary.win ? 'win' : 'lose'}"><div class="bigicon">${summary.win ? '🏆' : '🏚️'}</div><h2>${summary.title}</h2><p>${summary.text}</p>
+    <div class="grid2 s">${statCard('PIB final', fmtGdp(c.pop * c.gdpPc))}${statCard('Ranking', '#' + c.rank + ' de ' + w.countries.length)}${statCard('População', fmtPop(c.pop))}${statCard('Aprovação', nf(c.approval, 0) + '%')}</div>
+    <div class="chart-title">Poder nacional ao longo do tempo</div>${spark(c.hist.power, '#c59bff')}</div>`;
+  const i = await modal(html, [{ label: 'Novo jogo' }, { label: 'Menu principal', cls: 'ghost' }]);
+  Game.clearSave();
+  if (i === 0) showCountrySelect(); else showTitle();
+}
+
+async function showWar() {
+  const c = Game.me, w = Game.w;
+  const i = warInfo(c, w);
+  const html = `<div class="evt"><div class="advisor big"><span class="av">${ADVISORS.gen.icon}</span><div><b>${ADVISORS.gen.name}</b><small>Estado-Maior</small></div></div>
+    <h2>⚔️ Guerra contra ${i.foe.flag} ${i.foe.name}</h2>
+    <div class="front"><i style="left:${(i.front + 100) / 2}%"></i></div><div class="legend"><span>derrota</span><span>frente ${nf(i.front, 0)}</span><span>vitória</span></div>
+    <p>Sua força é <b>${nf(i.R * 100, 0)}%</b> da inimiga. Fadiga da população: ${nf(c.fatigue || 0, 0)}/100 · mobilização ${c.mobil || 0}/2 · ${i.years} ${i.years === 1 ? 'ano' : 'anos'} de guerra. Qual será a estratégia deste ano?</p></div>`;
+  const acts = WAR_ACTIONS.filter(a => !a.req || a.req(c));
+  const k = await modal(html, acts.map(a => ({ label: a.icon + ' ' + a.name, hint: a.desc, cls: a.peace ? 'ghost' : '' })), { cls: 'event' });
+  const r = warTurn(c, w, acts[k].id);
+  recalcStance(c); computeSat(c, w); updateRanks(w);
+  await modal(`<div class="evt"><h3>${acts[k].icon} ${acts[k].name}</h3><p class="result">${r.text}</p></div>`, [{ label: 'Entendido' }]);
+}
+
+async function playYear() {
+  if (ui.busy) return;
+  ui.busy = true;
+  try {
+    const r = Game.nextYear();
+    await showReport(r);
+    for (const ev of r.pending) await showEvent(ev);
+    if (r.election) {
+      await showElection(r.election);
+      if (!r.election.won) { await showEnd(Game.summary(null, r.election)); ui.busy = false; return; }
+    }
+    if (Game.w.war) await showWar();
+    const end = Game.end();
+    if (end) { await showEnd(Game.summary(end)); ui.busy = false; return; }
+    Game.save();
+    render();
+  } finally { ui.busy = false; }
+}
+
+// ---------------------------------------------------------------- telas iniciais
+function showTitle() {
+  $('#app').innerHTML = `<div class="title">
+    <div class="globe">🌍</div><h1>NAÇÃO EM ASCENSÃO</h1><p>Governe um país real, enfrente crises, equilibre as facções e leve sua nação ao topo do mundo — de ${START_YEAR} a ${END_YEAR}.</p>
+    <div class="menu">
+      <button class="btn big" id="t-new">▶ Novo jogo</button>
+      ${Game.hasSave() ? '<button class="btn big ghost" id="t-cont">⏩ Continuar</button>' : ''}
+      <button class="btn big ghost" id="t-help">❓ Como jogar</button>
+    </div><small class="dim">Dados aproximados e simplificados para fins de jogo.</small></div>`;
+  $('#t-new').onclick = showCountrySelect;
+  if ($('#t-cont')) $('#t-cont').onclick = () => { if (Game.load()) { ui.tab = 'painel'; render(); } else toast('Não foi possível carregar', 'bad'); };
+  $('#t-help').onclick = showHelp;
+}
+function showHelp() {
+  modal(`<h2>Como jogar</h2>
+    <p><b>Objetivo:</b> levar seu país ao <b>Top N</b> do ranking de poder mundial e se manter lá por ${WIN_STREAK} anos (N depende do país). Em ${END_YEAR} o jogo termina.</p>
+    <p><b>A cada ano:</b> ajuste o <b>Orçamento</b>, aprove <b>Leis</b> (custam ⭐ capital político), converse com os <b>conselheiros</b> e toque em <b>Próximo ano</b>. Eventos exigem decisões com ônus e bônus.</p>
+    <p><b>Povo:</b> 6 facções avaliam seu governo. A cada ${TERM} anos há <b>eleição</b>: perder significa o fim do jogo. Cuidado também com golpes e colapso.</p>
+    <p><b>Guerra:</b> rivais agressivos podem invadir seu país, e você pode declarar guerra a outros. Cada ano de guerra você escolhe a estratégia (ofensiva, defesa, desgaste, bloqueio, mobilização) ou negocia a paz. Guerra custa vidas, dinheiro e apoio. <b>Regime autoritário</b> (em Leis) suspende eleições, mas sufoca inovação e a juventude.</p>
+    <p><b>Dicas:</b> educação, saúde e infraestrutura rendem a longo prazo; déficits viram dívida e inflação; leis têm efeito atrasado; corrupção desperdiça gastos; o <b>Mundo</b> tem acordos comerciais e transferência de tecnologia.</p>`, [{ label: 'Entendi' }], { dismiss: true });
+}
+function showCountrySelect() {
+  const list = COUNTRIES.slice().sort((a, b) => b.diff - a.diff || b.pop * b.gdp - a.pop * a.gdp);
+  $('#app').innerHTML = `<div class="select"><header class="sh"><button class="btn small ghost" id="back">←</button><div><h2>Escolha seu país</h2><small>Comece pelos países em desenvolvimento: o desafio é maior</small></div></header>
+    <div class="diffsel">${Object.entries(DIFFS).map(([k, d]) => `<button class="chip ${ui.diff === k ? 'on' : ''}" data-diff="${k}">${d.name}</button>`).join('')}</div>
+    <div class="clist">${list.map(c => `<article class="ccard" data-id="${c.id}"><span class="flagbig">${c.flag}</span><div class="ci"><b>${c.name}</b><small>${fmtPop(c.pop)} · US$ ${nf(c.gdp, 1)} mil per capita · meta Top ${c.goal}</small><p>${c.blurb}</p><div class="stars">${'★'.repeat(c.diff)}${'☆'.repeat(5 - c.diff)} <small>dificuldade</small></div></div></article>`).join('')}</div></div>`;
+  $('#back').onclick = showTitle;
+  $('.clist').onclick = async e => {
+    const a = e.target.closest('.ccard'); if (!a) return;
+    const id = a.dataset.id;
+    const d = COUNTRIES.find(x => x.id === id);
+    const b = Game.start(id, null, ui.diff);
+    const c = Game.me;
+    const html = `<div class="chead"><span class="flagbig">${c.flag}</span><div><h2>${c.name}, ${START_YEAR}</h2><small>${goalText(c, Game.w)} · dificuldade ${DIFFS[ui.diff].name}</small></div></div>
+      <p>${b.blurb}</p><h3>Seus maiores desafios</h3>
+      ${b.issues.map(i => `<div class="advisor"><span class="av">${ADVISORS[i.who].icon}</span><div><b>${ADVISORS[i.who].name}</b><p>${i.text}</p></div></div>`).join('')}`;
+    const i = await modal(html, [{ label: 'Assumir o governo' }, { label: 'Escolher outro', cls: 'ghost' }]);
+    if (i === 0) { ui.tab = 'painel'; Game.save(); render(); }
+  };
+}
+
+// ---------------------------------------------------------------- eventos de interface
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-tab]');
+  if (t && $('#view')) { ui.tab = t.dataset.tab; document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b === t)); renderTab(); return; }
+  if (e.target.closest('#next')) { playYear(); return; }
+  const df = e.target.closest('[data-diff]'); if (df) { ui.diff = df.dataset.diff; document.querySelectorAll('[data-diff]').forEach(b => b.classList.toggle('on', b === df)); return; }
+  const ch = e.target.closest('[data-chart]'); if (ch) { ui.chart = ch.dataset.chart; renderTab(); return; }
+  const ct = e.target.closest('[data-cat]'); if (ct) { ui.polCat = ct.dataset.cat; renderTab(); return; }
+  const en = e.target.closest('[data-enact]');
+  if (en) { const r = enact(Game.me, Game.w, en.dataset.enact); if (r.ok) { toast('Lei aprovada: ' + POL[en.dataset.enact].name, 'good'); recalcStance(Game.me); computeSat(Game.me, Game.w); Game.save(); } else toast(r.why, 'bad'); renderTab(); refreshHud(); return; }
+  const rp = e.target.closest('[data-repeal]');
+  if (rp) { const r = repeal(Game.me, Game.w, rp.dataset.repeal); if (r.ok) { toast('Lei revogada', 'mid'); recalcStance(Game.me); computeSat(Game.me, Game.w); Game.save(); } else toast(r.why || 'Sem capital político', 'bad'); renderTab(); refreshHud(); return; }
+  const rr = e.target.closest('.rrow'); if (rr) { countryModal(rr.dataset.c); return; }
+});
+document.addEventListener('input', e => {
+  const k = e.target.dataset && e.target.dataset.sp;
+  if (!k) return;
+  const c = Game.me, v = parseFloat(e.target.value);
+  if (k === 'tax') { c.tax = v; $('#v-tax').textContent = nf(v, 1) + '% do PIB'; }
+  else { c.sp[k] = v; $('#v-' + k).textContent = nf(v, 1) + '%'; const s = SPEND.find(x => x.id === k); $('#p-' + k).innerHTML = projText(c, s); }
+  $('#bsum').innerHTML = budgetSummary();
+});
+document.addEventListener('change', e => { if (e.target.dataset && e.target.dataset.sp) Game.save(); });
+
+window.addEventListener('load', showTitle);

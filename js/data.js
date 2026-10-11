@@ -1,243 +1,184 @@
 'use strict';
-// Dados do jogo: eras, unidades, construções, tecnologias, civilizações ------
+// Dados do jogo: países, facções, políticas, conselheiros ----------------------
 
-const RESOURCES = ['food', 'wood', 'gold', 'stone'];
-const RES_NAME = { food: 'Comida', wood: 'Madeira', gold: 'Ouro', stone: 'Pedra' };
-const RES_ICON = { food: '🍖', wood: '🪵', gold: '🪙', stone: '🪨' };
-const RES_COLOR = { food: '#d8553b', wood: '#8a5a2b', gold: '#f0c63c', stone: '#9a9fa8' };
+const START_YEAR = 2000, END_YEAR = 2050, TERM = 4, WIN_STREAK = 10;
+// Dificuldades: skill = competência das IAs, shock = severidade das crises globais,
+// inc = vantagem de quem governa nas eleições, cp = capital político extra/ano, streak = anos no Top N para vencer
+const DIFFS = {
+  facil: { name: 'Fácil', skill: 0.75, shock: 0.8, inc: 11, cp: 0.6, streak: 8 },
+  normal: { name: 'Normal', skill: 1.0, shock: 1.0, inc: 7, cp: 0, streak: 10 },
+  dificil: { name: 'Difícil', skill: 1.4, shock: 1.5, inc: 3, cp: -0.7, streak: 14 },
+};
 
-const AGES = [
-  { name: 'Idade das Trevas', short: 'Trevas', icon: '🌑' },
-  { name: 'Idade Feudal', short: 'Feudal', icon: '🏘️' },
-  { name: 'Idade dos Castelos', short: 'Castelos', icon: '🏰' },
-  { name: 'Idade Imperial', short: 'Imperial', icon: '👑' },
+const FACTIONS = [
+  { id: 'workers', name: 'Trabalhadores', icon: '👷', desc: 'Querem empregos, salários e proteção social.' },
+  { id: 'business', name: 'Empresariado', icon: '💼', desc: 'Querem crescimento, impostos baixos e instituições sólidas.' },
+  { id: 'military', name: 'Militares', icon: '🎖️', desc: 'Querem orçamento de defesa, ordem e prestígio nacional.' },
+  { id: 'religious', name: 'Tradicionalistas', icon: '⛪', desc: 'Defendem família, costumes e segurança.' },
+  { id: 'rural', name: 'Setor Rural', icon: '🌾', desc: 'Querem infraestrutura, preços e menos impostos no campo.' },
+  { id: 'youth', name: 'Jovens Urbanos', icon: '🎓', desc: 'Querem educação, empregos, tecnologia e meio ambiente.' },
 ];
 
-// Requisitos de construções para avançar de era (n tipos distintos da lista)
-const AGE_REQ = {
-  1: { from: ['house', 'mill', 'lumbercamp', 'miningcamp', 'barracks', 'farm'], n: 2 },
-  2: { from: ['archeryrange', 'stable', 'blacksmith', 'market', 'tower'], n: 2 },
-  3: { from: ['castle', 'siegeworkshop'], n: 1 },
-};
-
-const PLAYER_COLORS = [
-  { name: 'Azul', c: '#3b7cf0' }, { name: 'Vermelho', c: '#e2433f' },
-  { name: 'Verde', c: '#35b44f' }, { name: 'Amarelo', c: '#ecc92e' },
-  { name: 'Ciano', c: '#27c6c9' }, { name: 'Roxo', c: '#a35ad8' },
-  { name: 'Laranja', c: '#f08a1f' }, { name: 'Cinza', c: '#a8abb3' },
+// áreas do orçamento: manutenção = gasto (% PIB) necessário só para não perder o que já existe
+const SPEND = [
+  { id: 'edu', name: 'Educação', icon: '📚', max: 12, maint: 2.2, tip: 'Eleva a educação (produtividade, menor natalidade).' },
+  { id: 'health', name: 'Saúde', icon: '🏥', max: 12, maint: 2.2, tip: 'Reduz mortalidade e aumenta a produtividade.' },
+  { id: 'infra', name: 'Infraestrutura', icon: '🏗️', max: 10, maint: 1.6, tip: 'Estradas, energia, portos: base do crescimento.' },
+  { id: 'rd', name: 'Ciência e P&D', icon: '🔬', max: 8, maint: 0.3, tip: 'Gera tecnologia nova e absorve a de fora.' },
+  { id: 'def', name: 'Defesa', icon: '🛡️', max: 10, maint: 1.5, tip: 'Força militar e agrada os militares.' },
+  { id: 'pol', name: 'Segurança pública', icon: '🚓', max: 6, maint: 1.2, tip: 'Reduz a criminalidade.' },
+  { id: 'welf', name: 'Assistência social', icon: '🤝', max: 10, maint: 0.0, tip: 'Reduz pobreza e desigualdade; agrada trabalhadores.' },
 ];
 
-// ---------------------------------------------------------------------------
-// Unidades. armor = [corpo a corpo, perfurante]. bonus = dano extra por classe.
-// tiers = melhorias (pesquisas) que alteram os atributos de forma cumulativa.
-// ---------------------------------------------------------------------------
-const UNITS = {
-  villager: { name: 'Aldeão', icon: '👷', cls: ['villager'], cost: { food: 50 }, time: 25, hp: 25, atk: 3, armor: [0, 0], range: 0, speed: 0.8, los: 4, reload: 2, bld: 'towncenter', age: 0,
-    desc: 'Coleta recursos, constrói e repara edifícios.' },
-  militia: { name: 'Milícia', icon: '🗡️', cls: ['infantry', 'melee'], cost: { food: 60, gold: 20 }, time: 21, hp: 40, atk: 4, armor: [0, 1], range: 0, speed: 0.9, los: 4, reload: 2, bld: 'barracks', age: 0,
-    tiers: [{ tech: 'manatarms', name: 'Homem de Armas', hp: 45, atk: 6 }, { tech: 'longsword', name: 'Espadachim', hp: 60, atk: 9 }, { tech: 'twohanded', name: 'Espadachim de Duas Mãos', atk: 11, armor: [1, 1] }],
-    desc: 'Infantaria básica. Boa contra arqueiros e prédios.' },
-  spearman: { name: 'Lanceiro', icon: '🔱', cls: ['infantry', 'spear', 'melee'], cost: { food: 35, wood: 25 }, time: 22, hp: 45, atk: 3, bonus: { cavalry: 15 }, armor: [0, 0], range: 0, speed: 1.0, los: 4, reload: 3, bld: 'barracks', age: 1,
-    tiers: [{ tech: 'pikeman', name: 'Piqueiro', hp: 55, atk: 4, bonus: { cavalry: 22 } }],
-    desc: 'Barato e excelente contra cavalaria.' },
-  archer: { name: 'Arqueiro', icon: '🏹', cls: ['archer', 'ranged'], cost: { wood: 25, gold: 45 }, time: 35, hp: 30, atk: 4, armor: [0, 0], range: 4, speed: 0.96, los: 6, reload: 2, bld: 'archeryrange', age: 1, proj: 'arrow',
-    tiers: [{ tech: 'crossbow', name: 'Besteiro', hp: 35, atk: 5, range: 5 }],
-    desc: 'Ataca de longe. Forte contra infantaria, fraco contra cavalaria.' },
-  skirmisher: { name: 'Escaramuçador', icon: '🎯', cls: ['archer', 'ranged', 'skirm'], cost: { food: 25, wood: 35 }, time: 22, hp: 30, atk: 2, bonus: { archer: 3 }, armor: [0, 3], range: 4, speed: 0.96, los: 6, reload: 3, bld: 'archeryrange', age: 1, proj: 'dart',
-    desc: 'Lança dardos. Especializado contra arqueiros.' },
-  scout: { name: 'Cavalaria Exploradora', icon: '🐎', cls: ['cavalry', 'melee'], cost: { food: 80 }, time: 30, hp: 45, atk: 3, armor: [0, 2], range: 0, speed: 1.55, los: 8, reload: 2, bld: 'stable', age: 1,
-    tiers: [{ tech: 'lightcav', name: 'Cavalaria Leve', hp: 60, atk: 7 }],
-    desc: 'Rápida. Ótima para explorar e caçar.' },
-  knight: { name: 'Cavaleiro', icon: '🐴', cls: ['cavalry', 'melee'], cost: { food: 60, gold: 75 }, time: 30, hp: 100, atk: 10, armor: [2, 2], range: 0, speed: 1.35, los: 4, reload: 1.8, bld: 'stable', age: 2,
-    tiers: [{ tech: 'cavalier', name: 'Cavaleiro Pesado', hp: 120, atk: 12 }],
-    desc: 'Cavalaria pesada. Destrói arqueiros, vulnerável a lanceiros.' },
-  ram: { name: 'Aríete', icon: '🪵', cls: ['siege', 'melee'], cost: { wood: 160, gold: 75 }, time: 36, hp: 175, atk: 3, bonus: { building: 125 }, armor: [-3, 190], range: 0, speed: 0.5, los: 3, reload: 5, bld: 'siegeworkshop', age: 2,
-    desc: 'Destrói edifícios. Imune a flechas, vulnerável a corpo a corpo.' },
-  mangonel: { name: 'Mangonel', icon: '☄️', cls: ['siege', 'ranged'], cost: { wood: 160, gold: 135 }, time: 46, hp: 50, atk: 40, armor: [0, 6], range: 7, speed: 0.6, los: 7, reload: 6, bld: 'siegeworkshop', age: 2, proj: 'stone', splash: 1.4,
-    desc: 'Arremessa pedras com dano em área.' },
-  king: { name: 'Rei', icon: '🤴', cls: ['king'], cost: {}, time: 0, hp: 150, atk: 0, armor: [0, 0], range: 0, speed: 1.1, los: 6, reload: 2, bld: null, age: 0, noTrain: true,
-    desc: 'Proteja-o! No modo Regicida, perder o rei significa a derrota.' },
-  // Unidades únicas (Castelo) -------------------------------------------------
-  longbowman: { name: 'Arqueiro Inglês', icon: '🏹', cls: ['archer', 'ranged', 'unique'], cost: { food: 35, wood: 40 }, time: 18, hp: 35, atk: 6, armor: [0, 0], range: 6, speed: 0.96, los: 8, reload: 2, bld: 'castle', age: 2, proj: 'arrow', desc: 'Arco longo de grande alcance.' },
-  throwaxe: { name: 'Lançador de Machados', icon: '🪓', cls: ['infantry', 'ranged', 'unique'], cost: { food: 55, gold: 25 }, time: 17, hp: 50, atk: 7, armor: [0, 0], range: 4, speed: 1.0, los: 6, reload: 2, bld: 'castle', age: 2, proj: 'axe', desc: 'Infantaria que arremessa machados.' },
-  mangudai: { name: 'Mangudai', icon: '🏇', cls: ['cavalry', 'ranged', 'unique'], cost: { wood: 55, gold: 65 }, time: 26, hp: 60, atk: 6, bonus: { siege: 8 }, armor: [0, 0], range: 4, speed: 1.4, los: 6, reload: 1.6, bld: 'castle', age: 2, proj: 'arrow', desc: 'Arqueiro montado veloz.' },
-  chukonu: { name: 'Chu Ko Nu', icon: '🏹', cls: ['archer', 'ranged', 'unique'], cost: { wood: 40, gold: 45 }, time: 16, hp: 45, atk: 8, armor: [0, 0], range: 4, speed: 0.96, los: 6, reload: 1.1, bld: 'castle', age: 2, proj: 'arrow', desc: 'Besta de repetição de disparo rápido.' },
-  huskarl: { name: 'Huskarl', icon: '🛡️', cls: ['infantry', 'melee', 'unique'], cost: { food: 52, gold: 36 }, time: 16, hp: 60, atk: 6, bonus: { archer: 6 }, armor: [0, 6], range: 0, speed: 1.05, los: 4, reload: 2, bld: 'castle', age: 2, desc: 'Guerreiro quase imune a flechas.' },
-  elephant: { name: 'Elefante de Guerra', icon: '🐘', cls: ['cavalry', 'melee', 'unique'], cost: { food: 100, gold: 70 }, time: 25, hp: 450, atk: 15, armor: [1, 3], range: 0, speed: 0.9, los: 4, reload: 2, bld: 'castle', age: 2, scale: 1.7, desc: 'Gigante blindado. Lento e resistente.' },
-  janissary: { name: 'Janízaro', icon: '💥', cls: ['infantry', 'ranged', 'unique'], cost: { food: 60, gold: 55 }, time: 21, hp: 35, atk: 17, armor: [0, 0], range: 8, speed: 0.96, los: 8, reload: 3.5, bld: 'castle', age: 2, proj: 'bullet', desc: 'Atirador de pólvora de longo alcance.' },
-  samurai: { name: 'Samurai', icon: '⚔️', cls: ['infantry', 'melee', 'unique'], cost: { food: 60, gold: 30 }, time: 12, hp: 60, atk: 8, bonus: { unique: 10 }, armor: [1, 1], range: 0, speed: 1.0, los: 4, reload: 1.4, bld: 'castle', age: 2, desc: 'Espadachim de ataque muito rápido.' },
-  berserker: { name: 'Berserker', icon: '🪓', cls: ['infantry', 'melee', 'unique'], cost: { food: 65, gold: 25 }, time: 14, hp: 55, atk: 9, armor: [0, 1], range: 0, speed: 1.05, los: 4, reload: 2, bld: 'castle', age: 2, desc: 'Guerreiro nórdico furioso e veloz.' },
-  teutonic: { name: 'Cavaleiro Teutônico', icon: '🛡️', cls: ['infantry', 'melee', 'unique'], cost: { food: 85, gold: 40 }, time: 12, hp: 80, atk: 12, armor: [5, 2], range: 0, speed: 0.8, los: 4, reload: 2, bld: 'castle', age: 2, desc: 'Infantaria pesada, lenta e quase indestrutível.' },
-  conquistador: { name: 'Conquistador', icon: '🔫', cls: ['cavalry', 'ranged', 'unique'], cost: { food: 60, gold: 70 }, time: 24, hp: 55, atk: 16, armor: [0, 0], range: 6, speed: 1.3, los: 6, reload: 3.5, bld: 'castle', age: 2, proj: 'bullet', desc: 'Cavaleiro com arcabuz de longo alcance.' },
-  cataphract: { name: 'Catafracto', icon: '🐴', cls: ['cavalry', 'melee', 'unique'], cost: { food: 70, gold: 75 }, time: 28, hp: 110, atk: 12, bonus: { infantry: 8 }, armor: [2, 2], range: 0, speed: 1.35, los: 4, reload: 1.8, bld: 'castle', age: 2, desc: 'Cavalaria blindada, devastadora contra infantaria.' },
-  mameluke: { name: 'Mameluco', icon: '🐪', cls: ['cavalry', 'melee', 'unique'], cost: { food: 55, gold: 85 }, time: 26, hp: 65, atk: 8, bonus: { cavalry: 10 }, armor: [1, 1], range: 0, speed: 1.4, los: 4, reload: 1.6, bld: 'castle', age: 2, desc: 'Cavaleiro de camelo, mortal contra cavalaria.' },
-  woad: { name: 'Guerreiro Woad', icon: '⚔️', cls: ['infantry', 'melee', 'unique'], cost: { food: 65, gold: 25 }, time: 10, hp: 45, atk: 8, armor: [0, 0], range: 0, speed: 1.35, los: 4, reload: 2, bld: 'castle', age: 2, desc: 'Infantaria extremamente veloz.' },
-  jaguar: { name: 'Guerreiro Jaguar', icon: '🐆', cls: ['infantry', 'melee', 'unique'], cost: { food: 60, gold: 30 }, time: 14, hp: 55, atk: 10, bonus: { infantry: 10 }, armor: [0, 1], range: 0, speed: 1.0, los: 4, reload: 2, bld: 'castle', age: 2, desc: 'Especialista em matar infantaria.' },
-  plumed: { name: 'Arqueiro Emplumado', icon: '🪶', cls: ['archer', 'ranged', 'unique'], cost: { wood: 45, gold: 45 }, time: 16, hp: 45, atk: 6, armor: [0, 0], range: 5, speed: 1.15, los: 7, reload: 2, bld: 'castle', age: 2, proj: 'arrow', desc: 'Arqueiro rápido e resistente.' },
-};
-for (const id in UNITS) { UNITS[id].id = id; if (!UNITS[id].bonus) UNITS[id].bonus = {}; }
-
-// ---------------------------------------------------------------------------
-// Construções
-// ---------------------------------------------------------------------------
-const BUILDINGS = {
-  towncenter: { name: 'Centro da Cidade', icon: '🏛️', size: 4, cost: { wood: 275, stone: 100 }, hp: 2400, time: 150, age: 1, los: 9, pop: 5, drop: ['food', 'wood', 'gold', 'stone'], atk: { dmg: 5, range: 7, reload: 2, proj: 'arrow' }, armor: [3, 5],
-    units: ['villager'], desc: 'Centro de sua cidade: treina aldeões, pesquisa eras e recebe recursos.' },
-  house: { name: 'Casa', icon: '🏠', size: 2, cost: { wood: 25 }, hp: 550, time: 25, age: 0, los: 4, pop: 5, armor: [1, 6], desc: 'Aumenta o limite de população em 5.' },
-  mill: { name: 'Moinho', icon: '🌾', size: 2, cost: { wood: 100 }, hp: 600, time: 35, age: 0, los: 5, drop: ['food'], armor: [1, 6], desc: 'Ponto de entrega de comida; pesquisa melhorias de fazendas.' },
-  lumbercamp: { name: 'Serraria', icon: '🪓', size: 2, cost: { wood: 100 }, hp: 600, time: 35, age: 0, los: 5, drop: ['wood'], armor: [1, 6], desc: 'Ponto de entrega de madeira; pesquisa melhorias de corte.' },
-  miningcamp: { name: 'Acampamento de Mineração', icon: '⛏️', size: 2, cost: { wood: 100 }, hp: 600, time: 35, age: 0, los: 5, drop: ['gold', 'stone'], armor: [1, 6], desc: 'Ponto de entrega de ouro e pedra.' },
-  farm: { name: 'Fazenda', icon: '🌽', size: 3, cost: { wood: 60 }, hp: 480, time: 15, age: 0, los: 3, passable: true, armor: [0, 0], desc: 'Fonte de comida renovável (replantio automático por 60 de madeira).' },
-  barracks: { name: 'Quartel', icon: '🏯', size: 3, cost: { wood: 175 }, hp: 1200, time: 50, age: 0, los: 6, armor: [2, 8], units: ['militia', 'spearman'], desc: 'Treina infantaria.' },
-  archeryrange: { name: 'Campo de Arquearia', icon: '🎯', size: 3, cost: { wood: 175 }, hp: 1200, time: 50, age: 1, los: 6, armor: [2, 8], units: ['archer', 'skirmisher'], desc: 'Treina arqueiros e escaramuçadores.' },
-  stable: { name: 'Estábulo', icon: '🐎', size: 3, cost: { wood: 175 }, hp: 1200, time: 50, age: 1, los: 6, armor: [2, 8], units: ['scout', 'knight'], desc: 'Treina cavalaria.' },
-  blacksmith: { name: 'Ferraria', icon: '🔨', size: 3, cost: { wood: 150 }, hp: 1200, time: 40, age: 1, los: 6, armor: [2, 8], desc: 'Melhora ataque e armadura das tropas.' },
-  market: { name: 'Mercado', icon: '⚖️', size: 3, cost: { wood: 175 }, hp: 1800, time: 60, age: 1, los: 6, armor: [2, 8], market: true, desc: 'Compre e venda recursos.' },
-  siegeworkshop: { name: 'Oficina de Cerco', icon: '🛠️', size: 3, cost: { wood: 200 }, hp: 1500, time: 60, age: 2, los: 6, armor: [2, 8], units: ['ram', 'mangonel'], desc: 'Constrói máquinas de cerco.' },
-  tower: { name: 'Torre de Vigia', icon: '🗼', size: 2, cost: { wood: 25, stone: 100 }, hp: 1020, time: 80, age: 1, los: 9, armor: [4, 8], atk: { dmg: 5, range: 8, reload: 2, proj: 'arrow' }, desc: 'Defesa que dispara flechas contra inimigos.' },
-  castle: { name: 'Castelo', icon: '🏰', size: 4, cost: { stone: 650 }, hp: 4800, time: 200, age: 2, los: 11, pop: 20, armor: [8, 9], atk: { dmg: 12, range: 9, reload: 2, proj: 'arrow' }, units: ['_unique'], desc: 'Fortaleza: treina a unidade única da sua civilização.' },
-};
-for (const id in BUILDINGS) { BUILDINGS[id].id = id; }
-
-// ---------------------------------------------------------------------------
-// Tecnologias. effects: ver Game.applyEffects
-// ---------------------------------------------------------------------------
-const TECHS = {};
-function T(id, o) { o.id = id; o.age = o.age || 0; TECHS[id] = o; }
-const cls = (c, stat, add) => ({ t: 'cls', cls: c, stat, add });
-const clsMul = (c, stat, mul) => ({ t: 'cls', cls: c, stat, mul });
-
-// Eras
-T('age1', { name: 'Avançar para a Idade Feudal', icon: '🏘️', cost: { food: 500 }, time: 130, bld: 'towncenter', ageUp: 1, desc: 'Libera novas construções e unidades. Requer 2 tipos de construção da Idade das Trevas.' });
-T('age2', { name: 'Avançar para a Idade dos Castelos', icon: '🏰', cost: { food: 800, gold: 200 }, time: 160, bld: 'towncenter', ageUp: 2, age: 1, desc: 'Libera castelos, cavalaria pesada e cerco. Requer 2 construções militares/comerciais da Era Feudal.' });
-T('age3', { name: 'Avançar para a Idade Imperial', icon: '👑', cost: { food: 1000, gold: 800 }, time: 190, bld: 'towncenter', ageUp: 3, age: 2, desc: 'Melhorias finais. Requer um Castelo ou Oficina de Cerco.' });
-// Centro da Cidade
-T('loom', { name: 'Tear', icon: '🧵', cost: { gold: 50 }, time: 25, bld: 'towncenter', desc: 'Aldeões: +15 PV, +1/+2 armadura.', effects: [cls('villager', 'hp', 15), cls('villager', 'armorM', 1), cls('villager', 'armorP', 2)] });
-T('wheelbarrow', { name: 'Carrinho de Mão', icon: '🛒', cost: { food: 175, wood: 50 }, time: 75, bld: 'towncenter', age: 1, desc: 'Aldeões: +10% velocidade, +3 de carga.', effects: [clsMul('villager', 'speed', 1.1), { t: 'carry', add: 3 }] });
-T('handcart', { name: 'Carroça', icon: '🛻', cost: { food: 300, wood: 200 }, time: 90, bld: 'towncenter', age: 2, req: ['wheelbarrow'], desc: 'Aldeões: +10% velocidade, +7 de carga.', effects: [clsMul('villager', 'speed', 1.1), { t: 'carry', add: 7 }] });
-T('townwatch', { name: 'Vigilância', icon: '👁️', cost: { food: 75 }, time: 25, bld: 'towncenter', age: 1, desc: 'Edifícios +4 e unidades +2 de visão.', effects: [{ t: 'bldlos', add: 4 }, cls('all', 'los', 2)] });
-// Serraria
-T('doublebit', { name: 'Machado de Dois Gumes', icon: '🪓', cost: { food: 100, wood: 50 }, time: 25, bld: 'lumbercamp', desc: 'Lenhadores trabalham 20% mais rápido.', effects: [{ t: 'gather', k: 'wood', mul: 1.2 }] });
-T('bowsaw', { name: 'Serra de Arco', icon: '🪚', cost: { food: 150, wood: 100 }, time: 50, bld: 'lumbercamp', age: 1, req: ['doublebit'], desc: 'Lenhadores trabalham 20% mais rápido.', effects: [{ t: 'gather', k: 'wood', mul: 1.2 }] });
-T('twomansaw', { name: 'Serra de Dois Homens', icon: '🪚', cost: { food: 300, wood: 200 }, time: 100, bld: 'lumbercamp', age: 2, req: ['bowsaw'], desc: 'Lenhadores trabalham 20% mais rápido.', effects: [{ t: 'gather', k: 'wood', mul: 1.2 }] });
-// Mineração
-T('goldmining', { name: 'Mineração de Ouro', icon: '⛏️', cost: { food: 100, wood: 75 }, time: 30, bld: 'miningcamp', age: 1, desc: 'Mineradores de ouro +15%.', effects: [{ t: 'gather', k: 'gold', mul: 1.15 }] });
-T('goldshaft', { name: 'Poço de Ouro', icon: '⛏️', cost: { food: 200, wood: 150 }, time: 75, bld: 'miningcamp', age: 2, req: ['goldmining'], desc: 'Mineradores de ouro +15%.', effects: [{ t: 'gather', k: 'gold', mul: 1.15 }] });
-T('stonemining', { name: 'Mineração de Pedra', icon: '🪨', cost: { food: 100, wood: 75 }, time: 30, bld: 'miningcamp', age: 1, desc: 'Mineradores de pedra +15%.', effects: [{ t: 'gather', k: 'stone', mul: 1.15 }] });
-T('stoneshaft', { name: 'Poço de Pedra', icon: '🪨', cost: { food: 200, wood: 150 }, time: 75, bld: 'miningcamp', age: 2, req: ['stonemining'], desc: 'Mineradores de pedra +15%.', effects: [{ t: 'gather', k: 'stone', mul: 1.15 }] });
-// Moinho
-T('horsecollar', { name: 'Coleira de Cavalo', icon: '🐴', cost: { food: 75, wood: 75 }, time: 20, bld: 'mill', age: 1, desc: 'Fazendas +20% de comida.', effects: [{ t: 'gather', k: 'farm', mul: 1.2 }] });
-T('heavyplow', { name: 'Arado Pesado', icon: '🚜', cost: { food: 125, wood: 125 }, time: 40, bld: 'mill', age: 2, req: ['horsecollar'], desc: 'Fazendas +20% de comida.', effects: [{ t: 'gather', k: 'farm', mul: 1.2 }] });
-T('croprotation', { name: 'Rotação de Culturas', icon: '🌱', cost: { food: 250, wood: 250 }, time: 70, bld: 'mill', age: 3, req: ['heavyplow'], desc: 'Fazendas +20% de comida.', effects: [{ t: 'gather', k: 'farm', mul: 1.2 }] });
-// Quartel / Arquearia / Estábulo (melhorias de unidades)
-T('manatarms', { name: 'Homem de Armas', icon: '🗡️', cost: { food: 100, gold: 40 }, time: 40, bld: 'barracks', age: 1, desc: 'Milícia evolui: +5 PV, +2 ataque.', effects: [] });
-T('longsword', { name: 'Espadachim', icon: '⚔️', cost: { food: 150, gold: 65 }, time: 50, bld: 'barracks', age: 2, req: ['manatarms'], desc: 'Infantaria evolui: PV 60, ataque 9.', effects: [] });
-T('twohanded', { name: 'Espadachim de Duas Mãos', icon: '⚔️', cost: { food: 300, gold: 100 }, time: 75, bld: 'barracks', age: 3, req: ['longsword'], desc: 'Infantaria evolui: ataque 11, +1/+1 armadura.', effects: [] });
-T('pikeman', { name: 'Piqueiro', icon: '🔱', cost: { food: 215, wood: 90 }, time: 45, bld: 'barracks', age: 2, desc: 'Lanceiros evoluem: +10 PV e bônus contra cavalaria.', effects: [] });
-T('crossbow', { name: 'Besteiro', icon: '🏹', cost: { food: 125, gold: 75 }, time: 35, bld: 'archeryrange', age: 2, desc: 'Arqueiros evoluem: +1 ataque, +1 alcance.', effects: [] });
-T('lightcav', { name: 'Cavalaria Leve', icon: '🐎', cost: { food: 150, gold: 50 }, time: 45, bld: 'stable', age: 2, desc: 'Exploradores evoluem: PV 60, ataque 7.', effects: [] });
-T('cavalier', { name: 'Cavaleiro Pesado', icon: '🐴', cost: { food: 300, gold: 300 }, time: 100, bld: 'stable', age: 3, desc: 'Cavaleiros evoluem: PV 120, ataque 12.', effects: [] });
-T('bloodlines', { name: 'Linhagem', icon: '🧬', cost: { food: 150, gold: 100 }, time: 50, bld: 'stable', age: 1, desc: 'Cavalaria +20 PV.', effects: [cls('cavalry', 'hp', 20)] });
-// Ferraria
-T('forging', { name: 'Forja', icon: '🔥', cost: { food: 150 }, time: 50, bld: 'blacksmith', age: 1, desc: 'Infantaria e cavalaria: +1 ataque.', effects: [cls('infantry', 'atk', 1), cls('cavalry', 'atk', 1)] });
-T('ironcasting', { name: 'Fundição de Ferro', icon: '🔥', cost: { food: 220, gold: 120 }, time: 75, bld: 'blacksmith', age: 2, req: ['forging'], desc: 'Infantaria e cavalaria: +1 ataque.', effects: [cls('infantry', 'atk', 1), cls('cavalry', 'atk', 1)] });
-T('blastfurnace', { name: 'Alto-Forno', icon: '🔥', cost: { food: 275, gold: 225 }, time: 100, bld: 'blacksmith', age: 3, req: ['ironcasting'], desc: 'Infantaria e cavalaria: +2 ataque.', effects: [cls('infantry', 'atk', 2), cls('cavalry', 'atk', 2)] });
-T('fletching', { name: 'Penas de Flecha', icon: '🪶', cost: { food: 100, gold: 50 }, time: 40, bld: 'blacksmith', age: 1, desc: 'Atiradores e torres: +1 ataque.', effects: [cls('ranged', 'atk', 1), { t: 'bldatk', add: 1 }] });
-T('bodkin', { name: 'Ponta Bodkin', icon: '🪶', cost: { food: 200, gold: 100 }, time: 60, bld: 'blacksmith', age: 2, req: ['fletching'], desc: 'Atiradores e torres: +1 ataque, +1 alcance.', effects: [cls('ranged', 'atk', 1), cls('ranged', 'range', 1), { t: 'bldatk', add: 1 }] });
-T('bracer', { name: 'Braçal', icon: '🪶', cost: { food: 300, gold: 200 }, time: 80, bld: 'blacksmith', age: 3, req: ['bodkin'], desc: 'Atiradores e torres: +1 ataque, +1 alcance.', effects: [cls('ranged', 'atk', 1), cls('ranged', 'range', 1), { t: 'bldatk', add: 1 }] });
-T('scalemail', { name: 'Cota de Escamas', icon: '🛡️', cost: { food: 100 }, time: 40, bld: 'blacksmith', age: 1, desc: 'Infantaria: +1/+1 armadura.', effects: [cls('infantry', 'armorM', 1), cls('infantry', 'armorP', 1)] });
-T('chainmail', { name: 'Cota de Malha', icon: '🛡️', cost: { food: 200, gold: 100 }, time: 55, bld: 'blacksmith', age: 2, req: ['scalemail'], desc: 'Infantaria: +1/+1 armadura.', effects: [cls('infantry', 'armorM', 1), cls('infantry', 'armorP', 1)] });
-T('platemail', { name: 'Armadura de Placas', icon: '🛡️', cost: { food: 300, gold: 150 }, time: 70, bld: 'blacksmith', age: 3, req: ['chainmail'], desc: 'Infantaria: +1/+2 armadura.', effects: [cls('infantry', 'armorM', 1), cls('infantry', 'armorP', 2)] });
-T('paddedarcher', { name: 'Armadura Acolchoada', icon: '🧥', cost: { food: 100 }, time: 40, bld: 'blacksmith', age: 1, desc: 'Arqueiros: +1/+1 armadura.', effects: [cls('archer', 'armorM', 1), cls('archer', 'armorP', 1)] });
-T('leatherarcher', { name: 'Armadura de Couro', icon: '🧥', cost: { food: 200, gold: 100 }, time: 55, bld: 'blacksmith', age: 2, req: ['paddedarcher'], desc: 'Arqueiros: +1/+1 armadura.', effects: [cls('archer', 'armorM', 1), cls('archer', 'armorP', 1)] });
-T('ringarcher', { name: 'Armadura de Anéis', icon: '🧥', cost: { food: 250, gold: 250 }, time: 70, bld: 'blacksmith', age: 3, req: ['leatherarcher'], desc: 'Arqueiros: +1/+2 armadura.', effects: [cls('archer', 'armorM', 1), cls('archer', 'armorP', 2)] });
-T('scalebarding', { name: 'Barda de Escamas', icon: '🐴', cost: { food: 150 }, time: 40, bld: 'blacksmith', age: 1, desc: 'Cavalaria: +1/+1 armadura.', effects: [cls('cavalry', 'armorM', 1), cls('cavalry', 'armorP', 1)] });
-T('chainbarding', { name: 'Barda de Malha', icon: '🐴', cost: { food: 250, gold: 150 }, time: 55, bld: 'blacksmith', age: 2, req: ['scalebarding'], desc: 'Cavalaria: +1/+1 armadura.', effects: [cls('cavalry', 'armorM', 1), cls('cavalry', 'armorP', 1)] });
-T('platebarding', { name: 'Barda de Placas', icon: '🐴', cost: { food: 350, gold: 200 }, time: 70, bld: 'blacksmith', age: 3, req: ['chainbarding'], desc: 'Cavalaria: +1/+2 armadura.', effects: [cls('cavalry', 'armorM', 1), cls('cavalry', 'armorP', 2)] });
-// Castelo / defesa
-T('masonry', { name: 'Alvenaria', icon: '🧱', cost: { food: 150, wood: 175 }, time: 50, bld: 'castle', age: 2, desc: 'Edifícios: +10% PV e +1/+1 armadura.', effects: [{ t: 'bhp', mul: 1.1 }, { t: 'barmor', add: 1 }] });
-T('hoardings', { name: 'Tapumes', icon: '🏰', cost: { wood: 400 }, time: 40, bld: 'castle', age: 2, desc: 'Castelos e torres: +2 ataque.', effects: [{ t: 'bldatk', add: 2 }] });
-
-// ---------------------------------------------------------------------------
-// Civilizações (bônus aplicados como efeitos; minAge = era mínima do bônus)
-// ---------------------------------------------------------------------------
-const CIVS = {
-  britons: { name: 'Britões', flag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿', unique: 'longbowman', uniqueDesc: 'Arqueiro Inglês: arco longo de alcance 6.',
-    bonuses: ['Centro da Cidade produz 20% mais rápido', 'Campos de Arquearia produzem 20% mais rápido', 'Arqueiros: +1 de alcance na Era dos Castelos e +1 na Imperial'],
-    effects: [{ t: 'time', bld: 'towncenter', mul: 0.8 }, { t: 'time', bld: 'archeryrange', mul: 0.8 }, { minAge: 2, ...cls('archer', 'range', 1) }, { minAge: 3, ...cls('archer', 'range', 1) }] },
-  franks: { name: 'Francos', flag: '🇫🇷', unique: 'throwaxe', uniqueDesc: 'Lançador de Machados: infantaria à distância.',
-    bonuses: ['Cavaleiros têm +20% de PV', 'Castelos custam 25% menos', 'Coleta de frutas silvestres 25% mais rápida'],
-    effects: [{ t: 'cls', cls: 'knight', stat: 'hp', mul: 1.2 }, { t: 'bcost', id: 'castle', mul: 0.75 }, { t: 'gather', k: 'berry', mul: 1.25 }] },
-  mongols: { name: 'Mongóis', flag: '🇲🇳', unique: 'mangudai', uniqueDesc: 'Mangudai: arqueiro montado.',
-    bonuses: ['Caça 40% mais rápida', 'Cavalaria Exploradora tem +2 de visão e +30% PV', 'Cavalaria +15% de velocidade de ataque'],
-    effects: [{ t: 'gather', k: 'hunt', mul: 1.4 }, cls('scout', 'los', 2), clsMul('scout', 'hp', 1.3), clsMul('cavalry', 'reload', 0.87)] },
-  chinese: { name: 'Chineses', flag: '🇨🇳', unique: 'chukonu', uniqueDesc: 'Chu Ko Nu: besta de repetição.',
-    bonuses: ['Começa com +3 aldeões, porém -200 de madeira', 'Fazendas rendem 10% mais', 'Tecnologias de Ferraria 10% mais baratas'],
-    start: { villagers: 3, res: { wood: -200 } }, effects: [{ t: 'gather', k: 'farm', mul: 1.1 }, { t: 'tcost', bld: 'blacksmith', mul: 0.9 }] },
-  goths: { name: 'Godos', flag: '🛡️', unique: 'huskarl', uniqueDesc: 'Huskarl: resistente a flechas.',
-    bonuses: ['Infantaria custa 25% menos', 'Infantaria ataca 15% mais rápido', 'Quartéis produzem 20% mais rápido'],
-    effects: [{ t: 'cost', cls: 'infantry', mul: 0.75 }, clsMul('infantry', 'reload', 0.87), { t: 'time', bld: 'barracks', mul: 0.8 }] },
-  persians: { name: 'Persas', flag: '🇮🇷', unique: 'elephant', uniqueDesc: 'Elefante de Guerra: monstro blindado.',
-    bonuses: ['Começa com +100 de madeira e comida', 'Centro da Cidade produz 40% mais rápido', 'Cavalaria +10% de PV'],
-    start: { res: { food: 100, wood: 100 } }, effects: [{ t: 'time', bld: 'towncenter', mul: 0.6 }, clsMul('cavalry', 'hp', 1.1)] },
-  turks: { name: 'Turcos', flag: '🇹🇷', unique: 'janissary', uniqueDesc: 'Janízaro: atirador de pólvora.',
-    bonuses: ['Mineração de ouro 20% mais rápida', 'Cavalaria Exploradora +25% PV e unidades únicas +10% PV', 'Pesquisas de Ferraria custam 15% menos'],
-    effects: [{ t: 'gather', k: 'gold', mul: 1.2 }, clsMul('scout', 'hp', 1.25), clsMul('unique', 'hp', 1.1), { t: 'tcost', bld: 'blacksmith', mul: 0.85 }] },
-  japanese: { name: 'Japoneses', flag: '🇯🇵', unique: 'samurai', uniqueDesc: 'Samurai: espadachim veloz.',
-    bonuses: ['Moinho, Serraria e Mineração custam 50% menos', 'Infantaria ataca 25% mais rápido', 'Caça 5% mais rápida'],
-    effects: [{ t: 'bcost', id: 'mill', mul: 0.5 }, { t: 'bcost', id: 'lumbercamp', mul: 0.5 }, { t: 'bcost', id: 'miningcamp', mul: 0.5 }, clsMul('infantry', 'reload', 0.8), { t: 'gather', k: 'hunt', mul: 1.05 }] },
-  vikings: { name: 'Vikings', flag: '⚓', unique: 'berserker', uniqueDesc: 'Berserker: guerreiro veloz.',
-    bonuses: ['Infantaria +20% PV', 'Pesquisas da Ferraria custam 15% menos', 'Aldeões carregam +3 recursos'],
-    effects: [clsMul('infantry', 'hp', 1.2), { t: 'tcost', bld: 'blacksmith', mul: 0.85 }, { t: 'carry', add: 3 }] },
-  teutons: { name: 'Teutões', flag: '🛡️', unique: 'teutonic', uniqueDesc: 'Cavaleiro Teutônico: tanque de infantaria.',
-    bonuses: ['Torres e Castelos +2 de ataque', 'Infantaria +1 de armadura corpo a corpo', 'Mineração de pedra 20% mais rápida'],
-    effects: [{ t: 'bldatk', add: 2 }, cls('infantry', 'armorM', 1), { t: 'gather', k: 'stone', mul: 1.2 }] },
-  spanish: { name: 'Espanhóis', flag: '🇪🇸', unique: 'conquistador', uniqueDesc: 'Conquistador: cavaleiro com pólvora.',
-    bonuses: ['Quartel, Arquearia e Estábulo custam 15% menos', 'Cavalaria +1 de ataque', 'Mineração de ouro 10% mais rápida'],
-    effects: [{ t: 'bcost', id: 'barracks', mul: 0.85 }, { t: 'bcost', id: 'archeryrange', mul: 0.85 }, { t: 'bcost', id: 'stable', mul: 0.85 }, cls('cavalry', 'atk', 1), { t: 'gather', k: 'gold', mul: 1.1 }] },
-  byzantines: { name: 'Bizantinos', flag: '✝️', unique: 'cataphract', uniqueDesc: 'Catafracto: cavalaria anti-infantaria.',
-    bonuses: ['Edifícios +10% de PV', 'Cavaleiros custam 15% menos', 'Torres e Castelos +1 de armadura de edifício (Alvenaria grátis)'],
-    effects: [{ t: 'bhp', mul: 1.1 }, { t: 'cost', cls: 'knight', mul: 0.85 }, { minAge: 2, t: 'barmor', add: 1 }] },
-  saracens: { name: 'Sarracenos', flag: '🌙', unique: 'mameluke', uniqueDesc: 'Mameluco: camelo contra cavalaria.',
-    bonuses: ['Arqueiros +1 de ataque', 'Começa com +100 de ouro', 'Cavalaria +10% PV'],
-    start: { res: { gold: 100 } }, effects: [cls('archer', 'atk', 1), clsMul('cavalry', 'hp', 1.1)] },
-  celts: { name: 'Celtas', flag: '☘️', unique: 'woad', uniqueDesc: 'Guerreiro Woad: infantaria ultrarrápida.',
-    bonuses: ['Infantaria 15% mais rápida', 'Lenhadores 15% mais rápidos', 'Armas de cerco +25% PV'],
-    effects: [clsMul('infantry', 'speed', 1.15), { t: 'gather', k: 'wood', mul: 1.15 }, clsMul('siege', 'hp', 1.25)] },
-  aztecs: { name: 'Astecas', flag: '🌞', unique: 'jaguar', uniqueDesc: 'Guerreiro Jaguar: caçador de infantaria.',
-    bonuses: ['Aldeões carregam +5 recursos', 'Infantaria +1 de ataque', 'Começa com +50 de ouro'],
-    start: { res: { gold: 50 } }, effects: [{ t: 'carry', add: 5 }, cls('infantry', 'atk', 1)] },
-  mayans: { name: 'Maias', flag: '🗿', unique: 'plumed', uniqueDesc: 'Arqueiro Emplumado: veloz e preciso.',
-    bonuses: ['Arqueiros custam 20% menos', 'Fazendas rendem 10% mais', 'Começa com +50 de comida'],
-    start: { res: { food: 50 } }, effects: [{ t: 'cost', cls: 'archer', mul: 0.8 }, { t: 'gather', k: 'farm', mul: 1.1 }] },
-};
-for (const id in CIVS) CIVS[id].id = id;
-
-// Dificuldade das IAs ---------------------------------------------------------
-const AI_LEVELS = {
-  easy: { name: 'Fácil', think: 2.2, vils: 28, wave: 14, waveGrow: 6, firstAttack: 780, gatherMul: 0.85, upgrades: 0.35, keepArmy: 0.55 },
-  moderate: { name: 'Moderada', think: 1.4, vils: 45, wave: 24, waveGrow: 8, firstAttack: 600, gatherMul: 1.0, upgrades: 0.7, keepArmy: 0.35 },
-  hard: { name: 'Difícil', think: 0.9, vils: 62, wave: 34, waveGrow: 10, firstAttack: 480, gatherMul: 1.1, upgrades: 1.0, keepArmy: 0.2 },
-  expert: { name: 'Especialista', think: 0.6, vils: 75, wave: 42, waveGrow: 12, firstAttack: 400, gatherMul: 1.2, upgrades: 1.0, keepArmy: 0.1 },
+const ADVISORS = {
+  eco: { name: 'Helena Costa', role: 'Ministra da Economia', icon: '👩‍💼' },
+  gen: { name: 'Gen. Duarte', role: 'Chefe das Forças Armadas', icon: '🎖️' },
+  soc: { name: 'Dra. Amara', role: 'Ministra da Saúde e Assistência', icon: '👩‍⚕️' },
+  sci: { name: 'Prof. Yuki', role: 'Conselheiro de Ciência', icon: '🧑‍🔬' },
+  pol: { name: 'Marco Reis', role: 'Chefe de Gabinete', icon: '🕴️' },
 };
 
-// Tipos de mapa ----------------------------------------------------------------
-const MAP_TYPES = {
-  arabia: { name: 'Planície (Arábia)', desc: 'Terreno aberto com bosques espalhados.', forest: 0.09, lakes: 0 },
-  lagos: { name: 'Terra dos Lagos', desc: 'Lagos bloqueiam passagens e criam gargalos.', forest: 0.10, lakes: 1 },
-  floresta: { name: 'Floresta Negra', desc: 'Florestas densas separam os impérios.', forest: 0.30, lakes: 0 },
-  continental: { name: 'Continente', desc: 'Mistura de planícies, florestas e lagos.', forest: 0.15, lakes: 0.5 },
-};
-const MAP_SIZES = { tiny: { name: 'Minúsculo (2 jog.)', n: 48 }, small: { name: 'Pequeno (3-4 jog.)', n: 64 }, medium: { name: 'Médio (5-6 jog.)', n: 84 }, large: { name: 'Grande (7-8 jog.)', n: 104 } };
+// ---------------------------------------------------------------------------
+// Países (valores de 2000 aproximados e simplificados para fins de jogo)
+// pop: milhões; gdp: PIB per capita (mil US$); goal: posição-alvo no ranking de poder
+// ---------------------------------------------------------------------------
+const COUNTRIES = [
+  { id: 'BR', name: 'Brasil', flag: '🇧🇷', pop: 175, gdp: 7.5, birth: 20, urban: 81, tech: 38, edu: 55, health: 62, infra: 50, ineq: 60, corr: 55, comm: 45, mil: 45, agro: 8, ind: 27, debt: 60, infl: 7, goal: 5, diff: 3,
+    blurb: 'Gigante agrícola e mineral, desigual e muito dependente de commodities. Tem escala, mas precisa de produtividade e instituições.' },
+  { id: 'IN', name: 'Índia', flag: '🇮🇳', pop: 1050, gdp: 2.5, birth: 26, urban: 28, tech: 35, edu: 45, health: 48, infra: 38, ineq: 40, corr: 60, comm: 25, mil: 55, agro: 24, ind: 26, debt: 70, infl: 5, goal: 2, diff: 4,
+    blurb: 'Bilhão de pessoas e uma geração jovem enorme. Dividendo demográfico ou bomba-relógio de desemprego?' },
+  { id: 'NG', name: 'Nigéria', flag: '🇳🇬', pop: 125, gdp: 1.4, birth: 41, urban: 35, tech: 20, edu: 38, health: 35, infra: 25, ineq: 45, corr: 75, comm: 80, mil: 30, agro: 25, ind: 30, debt: 40, infl: 12, goal: 9, diff: 5,
+    blurb: 'Petróleo, população explosiva e corrupção profunda. Escapar da maldição das commodities é o maior desafio.' },
+  { id: 'VN', name: 'Vietnã', flag: '🇻🇳', pop: 78, gdp: 1.9, birth: 19, urban: 24, tech: 28, edu: 55, health: 58, infra: 38, ineq: 36, corr: 55, comm: 30, mil: 35, agro: 24, ind: 36, debt: 35, infl: 4, goal: 8, diff: 3,
+    blurb: 'Economia em abertura, mão de obra educada e barata. Pode virar a próxima fábrica do mundo.' },
+  { id: 'ID', name: 'Indonésia', flag: '🇮🇩', pop: 210, gdp: 3.0, birth: 22, urban: 42, tech: 30, edu: 50, health: 52, infra: 40, ineq: 38, corr: 65, comm: 50, mil: 35, agro: 16, ind: 40, debt: 90, infl: 9, goal: 4, diff: 4,
+    blurb: 'Arquipélago de 200 milhões, rico em recursos, saindo de uma grande crise financeira.' },
+  { id: 'MX', name: 'México', flag: '🇲🇽', pop: 98, gdp: 9.0, birth: 24, urban: 74, tech: 42, edu: 58, health: 65, infra: 52, ineq: 52, corr: 60, comm: 35, mil: 38, agro: 4, ind: 28, debt: 40, infl: 9, goal: 6, diff: 3,
+    blurb: 'Vizinho dos EUA, integrado ao comércio norte-americano, mas refém da violência e da informalidade.' },
+  { id: 'EG', name: 'Egito', flag: '🇪🇬', pop: 68, gdp: 3.8, birth: 27, urban: 43, tech: 30, edu: 50, health: 58, infra: 45, ineq: 38, corr: 62, comm: 40, mil: 52, agro: 16, ind: 32, debt: 70, infl: 3, goal: 10, diff: 4,
+    blurb: 'Posição estratégica no Suez, população jovem crescente e pressão por empregos.' },
+  { id: 'BD', name: 'Bangladesh', flag: '🇧🇩', pop: 130, gdp: 1.4, birth: 28, urban: 24, tech: 20, edu: 40, health: 45, infra: 25, ineq: 36, corr: 70, comm: 15, mil: 25, agro: 25, ind: 25, debt: 40, infl: 4, goal: 9, diff: 5,
+    blurb: 'Muito povoado, vulnerável a enchentes, com uma indústria têxtil em ascensão.' },
+  { id: 'PH', name: 'Filipinas', flag: '🇵🇭', pop: 77, gdp: 3.2, birth: 28, urban: 48, tech: 28, edu: 58, health: 55, infra: 38, ineq: 44, corr: 65, comm: 25, mil: 25, agro: 15, ind: 32, debt: 60, infl: 4, goal: 9, diff: 4,
+    blurb: 'Povo jovem e anglófono, remessas de emigrantes e fortes desastres naturais.' },
+  { id: 'ET', name: 'Etiópia', flag: '🇪🇹', pop: 66, gdp: 0.7, birth: 43, urban: 15, tech: 10, edu: 25, health: 30, infra: 15, ineq: 33, corr: 60, comm: 55, mil: 30, agro: 45, ind: 10, debt: 80, infl: 6, goal: 15, diff: 5,
+    blurb: 'Um dos países mais pobres do mundo, com enorme potencial agrícola e hidrelétrico. Começar do zero.' },
+  { id: 'TR', name: 'Turquia', flag: '🇹🇷', pop: 64, gdp: 8.5, birth: 22, urban: 65, tech: 40, edu: 60, health: 66, infra: 52, ineq: 43, corr: 50, comm: 20, mil: 55, agro: 12, ind: 28, debt: 60, infl: 45, goal: 10, diff: 3,
+    blurb: 'Ponte entre Europa e Ásia, com economia industrial mas inflação crônica e instabilidade política.' },
+  { id: 'PK', name: 'Paquistão', flag: '🇵🇰', pop: 140, gdp: 1.9, birth: 33, urban: 33, tech: 25, edu: 38, health: 42, infra: 30, ineq: 33, corr: 70, comm: 25, mil: 60, agro: 25, ind: 22, debt: 80, infl: 5, goal: 9, diff: 5,
+    blurb: 'Potência nuclear com economia frágil, alta natalidade e tensões regionais.' },
+  { id: 'CO', name: 'Colômbia', flag: '🇨🇴', pop: 40, gdp: 5.8, birth: 22, urban: 72, tech: 36, edu: 56, health: 62, infra: 40, ineq: 57, corr: 60, comm: 55, mil: 45, agro: 12, ind: 28, debt: 35, infl: 9, goal: 9, diff: 4,
+    blurb: 'Saindo de um longo conflito interno, com café, petróleo e uma desigualdade profunda.' },
+  { id: 'AR', name: 'Argentina', flag: '🇦🇷', pop: 37, gdp: 9.5, birth: 19, urban: 90, tech: 42, edu: 66, health: 72, infra: 55, ineq: 49, corr: 55, comm: 45, mil: 35, agro: 6, ind: 25, debt: 50, infl: 2, goal: 10, diff: 4,
+    blurb: 'Povo educado e terra fértil, porém com histórico de crises de dívida e inflação.' },
+  { id: 'ZA', name: 'África do Sul', flag: '🇿🇦', pop: 44, gdp: 7.5, birth: 24, urban: 57, tech: 40, edu: 58, health: 50, infra: 55, ineq: 63, corr: 50, comm: 55, mil: 45, agro: 4, ind: 30, debt: 40, infl: 6, goal: 9, diff: 4,
+    blurb: 'Maior economia industrial da África, a mais desigual do mundo e com desemprego alto.' },
+  { id: 'RU', name: 'Rússia', flag: '🇷🇺', pop: 146, gdp: 7.5, birth: 9, urban: 73, tech: 55, edu: 80, health: 65, infra: 55, ineq: 40, corr: 70, comm: 70, mil: 85, agro: 6, ind: 36, debt: 50, infl: 20, goal: 3, diff: 3,
+    blurb: 'Arsenal imenso, energia e ciência herdadas, mas população em declínio e economia dependente do gás e petróleo.' },
+  { id: 'CN', name: 'China', flag: '🇨🇳', pop: 1260, gdp: 3.8, birth: 14, urban: 36, tech: 42, edu: 55, health: 62, infra: 48, ineq: 40, corr: 50, comm: 15, mil: 70, agro: 15, ind: 45, debt: 25, infl: 1, goal: 1, diff: 2,
+    blurb: 'Fábrica do mundo em ascensão rápida. O desafio é envelhecer antes de enriquecer.' },
+  { id: 'JP', name: 'Japão', flag: '🇯🇵', pop: 127, gdp: 26, birth: 9, urban: 79, tech: 90, edu: 90, health: 92, infra: 88, ineq: 25, corr: 20, comm: 5, mil: 40, agro: 2, ind: 30, debt: 130, infl: 0, goal: 5, diff: 3,
+    blurb: 'Tecnologia de ponta e uma população que envelhece rápido. Como manter o poder sem gente jovem?' },
+  { id: 'DE', name: 'Alemanha', flag: '🇩🇪', pop: 82, gdp: 26, birth: 9, urban: 75, tech: 90, edu: 88, health: 90, infra: 90, ineq: 30, corr: 15, comm: 8, mil: 40, agro: 1, ind: 28, debt: 60, infl: 2, goal: 3, diff: 2,
+    blurb: 'Potência industrial exportadora no centro da Europa, com população que encolhe.' },
+  { id: 'US', name: 'Estados Unidos', flag: '🇺🇸', pop: 282, gdp: 36, birth: 14, urban: 79, tech: 98, edu: 87, health: 80, infra: 90, ineq: 41, corr: 25, comm: 10, mil: 95, agro: 1, ind: 22, debt: 55, infl: 3, goal: 1, diff: 1,
+    blurb: 'Superpotência única. O desafio é manter a liderança diante dos que a alcançam.' },
+  { id: 'GB', name: 'Reino Unido', flag: '🇬🇧', pop: 59, gdp: 25, birth: 11, urban: 79, tech: 90, edu: 88, health: 88, infra: 85, ineq: 35, corr: 15, comm: 12, mil: 60, agro: 1, ind: 20, debt: 40, infl: 2, goal: 6, diff: 2,
+    blurb: 'Finanças, serviços e influência global, fora do centro do poder industrial.' },
+  { id: 'FR', name: 'França', flag: '🇫🇷', pop: 60, gdp: 24, birth: 13, urban: 76, tech: 88, edu: 85, health: 91, infra: 88, ineq: 30, corr: 20, comm: 8, mil: 65, agro: 3, ind: 20, debt: 58, infl: 2, goal: 6, diff: 2,
+    blurb: 'Estado forte, dissuasão nuclear e um modelo social caro de manter.' },
+  { id: 'KR', name: 'Coreia do Sul', flag: '🇰🇷', pop: 47, gdp: 17, birth: 14, urban: 80, tech: 75, edu: 85, health: 85, infra: 80, ineq: 32, corr: 40, comm: 5, mil: 60, agro: 5, ind: 40, debt: 20, infl: 2, goal: 6, diff: 2,
+    blurb: 'Milagre econômico em andamento: a tecnologia dá o salto, mas a natalidade desaba.' },
+  { id: 'SA', name: 'Arábia Saudita', flag: '🇸🇦', pop: 21, gdp: 18, birth: 31, urban: 79, tech: 50, edu: 60, health: 72, infra: 65, ineq: 45, corr: 60, comm: 95, mil: 70, agro: 4, ind: 50, debt: 60, infl: 0, goal: 12, diff: 3,
+    blurb: 'Riqueza imensa vinda do petróleo. Como diversificar antes que o recurso perca valor?' },
+];
+for (const c of COUNTRIES) { c.open = c.open || 50; }
 
-const GAME_MODES = {
-  conquest: { name: 'Conquista', desc: 'Destrua todos os edifícios e aldeões inimigos.' },
-  regicide: { name: 'Regicida', desc: 'Cada jogador tem um Rei. Se o seu cair, você perde.' },
-  deathmatch: { name: 'Mata-Mata (Death Match)', desc: 'Começa com recursos enormes. Guerra total desde o início.' },
-};
+// ---------------------------------------------------------------------------
+// Políticas (cartas). fx = efeito por ano com efeito pleno (sobe ao longo de "delay" anos)
+// tgt = nível-alvo para o qual a variável converge; fac = opinião fixa enquanto estiver ativa
+// upkeep = custo anual em % do PIB (negativo = receita)
+// ---------------------------------------------------------------------------
+const POLICIES = [
+  // Economia
+  { id: 'subsidio_ind', cat: 'Economia', icon: '🏭', name: 'Subsídio à indústria', cp: 2, upkeep: 0.8, delay: 3, desc: 'Crédito barato e proteção para fábricas nacionais.',
+    fx: { gBonus: 0.5, infl: 0.4, comm: -0.6, pollution: 0.5, jobs: 0.8 }, fac: { business: 4, workers: 3, rural: -3 } },
+  { id: 'abertura', cat: 'Economia', icon: '🌐', name: 'Abertura comercial', cp: 3, upkeep: 0, delay: 2, desc: 'Reduz tarifas e atrai concorrência e tecnologia de fora.', excl: ['protecao'],
+    tgt: { open: 78 }, fx: { gBonus: 0.35, tech: 0.3, jobs: -0.4 }, fac: { business: 5, workers: -4, rural: -2 } },
+  { id: 'protecao', cat: 'Economia', icon: '🚧', name: 'Protecionismo', cp: 2, upkeep: 0, delay: 2, desc: 'Tarifas altas protegem empregos locais, mas isolam a economia.', excl: ['abertura'],
+    tgt: { open: 25 }, fx: { gBonus: -0.2, infl: 0.2, jobs: 0.5 }, fac: { workers: 3, business: -3, rural: 3 } },
+  { id: 'zonas', cat: 'Economia', icon: '🏙️', name: 'Zonas econômicas especiais', cp: 3, upkeep: 0.4, delay: 4, desc: 'Polos com isenções para atrair investimento estrangeiro.',
+    fx: { gBonus: 0.4, tech: 0.4, infra: 0.3, ineq: 0.25, pollution: 0.2 }, fac: { business: 4, workers: -2, rural: -1 } },
+  { id: 'bc_indep', cat: 'Economia', icon: '🏦', name: 'Banco central independente', cp: 3, upkeep: 0.1, delay: 2, desc: 'Controle técnico da moeda: menos inflação, menos truques políticos.',
+    fx: { infl: -0.6, gBonus: -0.05, corr: -0.1 }, once: { rating: 4 }, fac: { business: 4, workers: -2 } },
+  { id: 'privatiza', cat: 'Economia', icon: '🏷️', name: 'Privatizações', cp: 3, upkeep: -0.4, delay: 2, desc: 'Vende estatais: entra caixa e eficiência, mas empregos e controle saem.', excl: ['estatiza'],
+    once: { debt: -4, jobs: -4 }, fx: { gBonus: 0.25, corr: -0.2, ineq: 0.2 }, fac: { business: 6, workers: -6 } },
+  { id: 'estatiza', cat: 'Economia', icon: '🏛️', name: 'Estatização estratégica', cp: 3, upkeep: 0.8, delay: 3, desc: 'O Estado assume energia, mineração e transportes.', excl: ['privatiza'],
+    fx: { jobs: 0.5, corr: 0.3, tech: 0.1, gBonus: -0.1 }, fac: { workers: 4, military: 3, business: -6 } },
+  { id: 'reforma_trib', cat: 'Economia', icon: '🧾', name: 'Reforma tributária progressiva', cp: 3, upkeep: 0, delay: 3, desc: 'Cobra mais de quem tem mais e fecha brechas de evasão.',
+    fx: { ineq: -0.5, collect: 1.2 }, fac: { business: -4, workers: 4, youth: 2 } },
+  { id: 'reforma_prev', cat: 'Economia', icon: '👴', name: 'Reforma da previdência', cp: 3, upkeep: 0, delay: 3, desc: 'Idade mínima maior e benefícios menores: alivia o orçamento no longo prazo.',
+    fx: { pension: -0.06 }, fac: { workers: -8, business: 5 } },
+  { id: 'reforma_agraria', cat: 'Economia', icon: '🌱', name: 'Reforma agrária', cp: 3, upkeep: 0.5, delay: 4, desc: 'Redistribui terras improdutivas a pequenos agricultores.',
+    fx: { ineq: -0.5, jobs: 0.3 }, fac: { rural: -7, workers: 4, youth: 2 } },
+  { id: 'agro_sub', cat: 'Economia', icon: '🚜', name: 'Subsídio ao agronegócio', cp: 2, upkeep: 0.6, delay: 2, desc: 'Crédito e seguros para a produção rural.',
+    fx: { gBonus: 0.2, pollution: 0.2, comm: 0.5 }, fac: { rural: 6, youth: -2 } },
+  { id: 'recursos', cat: 'Economia', icon: '⛏️', name: 'Exploração intensiva de recursos', cp: 2, upkeep: -0.6, delay: 2, desc: 'Mais petróleo e minérios: receita rápida, dependência e poluição.',
+    fx: { comm: 1.2, pollution: 0.8, corr: 0.3, gBonus: 0.25 }, fac: { business: 4, rural: 2, youth: -4 } },
+  { id: 'fundo_soberano', cat: 'Economia', icon: '💰', name: 'Fundo soberano', cp: 3, upkeep: 0.5, delay: 4, desc: 'Poupa parte da renda dos recursos para o futuro.', req: c => c.comm >= 35,
+    fx: { comm: -0.8, corr: -0.2 }, once: { rating: 3 }, fac: { business: 2 } },
+  // Social
+  { id: 'edu_universal', cat: 'Social', icon: '📚', name: 'Educação básica universal', cp: 2, upkeep: 1.0, delay: 5, desc: 'Escola para todos: base de tudo, mas só dá retorno em anos.',
+    fx: { edu: 1.2, ineq: -0.25, birthT: -0.5, crime: -0.2 }, fac: { youth: 5, workers: 3, religious: -1 } },
+  { id: 'ensino_tec', cat: 'Social', icon: '🔧', name: 'Ensino técnico profissionalizante', cp: 2, upkeep: 0.6, delay: 4, desc: 'Forma mão de obra qualificada para a indústria.',
+    fx: { edu: 0.6, tech: 0.3, jobs: 0.5 }, fac: { business: 3, workers: 3, youth: 2 } },
+  { id: 'saude_univ', cat: 'Social', icon: '🏥', name: 'Saúde universal', cp: 3, upkeep: 1.2, delay: 4, desc: 'Atendimento público gratuito.',
+    fx: { health: 1.3, ineq: -0.2 }, fac: { workers: 5, youth: 3, business: -2 } },
+  { id: 'saneamento', cat: 'Social', icon: '🚰', name: 'Saneamento básico', cp: 2, upkeep: 0.8, delay: 4, desc: 'Água tratada e esgoto: salva vidas e reduz doenças.',
+    fx: { health: 0.9, infra: 0.3, pollution: -0.2 }, fac: { workers: 3, youth: 2 } },
+  { id: 'renda_basica', cat: 'Social', icon: '💳', name: 'Transferência de renda', cp: 3, upkeep: 1.2, delay: 2, desc: 'Renda mínima às famílias pobres.',
+    fx: { ineq: -0.7, crime: -0.3, jobs: -0.15 }, fac: { workers: 6, rural: 3, business: -3 } },
+  { id: 'habitacao', cat: 'Social', icon: '🏘️', name: 'Programa de habitação', cp: 2, upkeep: 0.8, delay: 4, desc: 'Moradia popular nas periferias.',
+    fx: { crime: -0.3, ineq: -0.2, infra: 0.2 }, fac: { workers: 4, youth: 2 } },
+  { id: 'planej_fam', cat: 'Demografia', icon: '👪', name: 'Planejamento familiar', cp: 2, upkeep: 0.2, delay: 4, desc: 'Acesso a contraceptivos e educação reprodutiva.', excl: ['incent_nat'],
+    fx: { birthT: -2.5, edu: 0.1 }, fac: { youth: 3, religious: -8, rural: -2 } },
+  { id: 'incent_nat', cat: 'Demografia', icon: '🍼', name: 'Incentivo à natalidade', cp: 2, upkeep: 0.8, delay: 3, desc: 'Bônus e creches para famílias com filhos.', excl: ['planej_fam'],
+    fx: { birthT: 2.5 }, fac: { religious: 7, youth: -3 } },
+  { id: 'imigra', cat: 'Demografia', icon: '🧳', name: 'Imigração qualificada', cp: 3, upkeep: 0.3, delay: 3, desc: 'Vistos para profissionais e estudantes estrangeiros.',
+    fx: { migr: 0.25, tech: 0.3 }, fac: { business: 3, workers: -4, religious: -4, youth: 1 } },
+  // Governança
+  { id: 'anticorrupcao', cat: 'Governança', icon: '⚖️', name: 'Combate à corrupção', cp: 3, upkeep: 0.3, delay: 3, desc: 'Polícia federal e justiça independentes.',
+    fx: { corr: -1.6 }, fac: { youth: 5, business: 2, military: -2 } },
+  { id: 'autoritarismo', cat: 'Governança', icon: '🦅', name: 'Regime autoritário', cp: 5, upkeep: 0.9, delay: 2, desc: 'Suspende eleições e centraliza o poder: estabilidade garantida pela força, ao custo de inovação, corrupção e legitimidade.', excl: ['transparencia'],
+    fx: { gBonus: -0.35, tech: -0.35, corr: 0.5, crime: -0.4, influence: -0.3 }, fac: { military: 10, business: 3, religious: 4, youth: -14, workers: -6 } },
+  { id: 'transparencia', cat: 'Governança', icon: '🔍', name: 'Governo digital e transparência', cp: 2, upkeep: 0.3, delay: 3, desc: 'Serviços online e dados abertos.',
+    fx: { corr: -0.7, tech: 0.2 }, fac: { youth: 3 } },
+  { id: 'policia_com', cat: 'Governança', icon: '🚓', name: 'Policiamento comunitário', cp: 2, upkeep: 0.5, delay: 3, desc: 'Presença policial próxima às comunidades.',
+    fx: { crime: -0.9 }, fac: { religious: 2, workers: 2 } },
+  { id: 'lei_ordem', cat: 'Governança', icon: '🔒', name: 'Lei e ordem linha-dura', cp: 2, upkeep: 0.3, delay: 2, desc: 'Penas duras e patrulhamento ostensivo.',
+    fx: { crime: -0.6 }, fac: { military: 5, religious: 4, youth: -6, workers: -2 } },
+  // Infraestrutura e tecnologia
+  { id: 'infra_nacional', cat: 'Tecnologia', icon: '🛤️', name: 'Plano nacional de infraestrutura', cp: 3, upkeep: 1.5, delay: 5, desc: 'Ferrovias, portos, rodovias e energia.',
+    fx: { infra: 1.6, gBonus: 0.1 }, fac: { business: 4, rural: 3, workers: 3 } },
+  { id: 'energia_renov', cat: 'Tecnologia', icon: '🌞', name: 'Energia renovável', cp: 3, upkeep: 1.0, delay: 6, desc: 'Solar, eólica e hidrelétrica: menos poluição.',
+    fx: { pollution: -1.4, infra: 0.4, gBonus: 0.05 }, fac: { youth: 5, business: -1 } },
+  { id: 'ciencia', cat: 'Tecnologia', icon: '🧪', name: 'Fundo nacional de ciência', cp: 3, upkeep: 1.0, delay: 5, desc: 'Bolsas, laboratórios e universidades de pesquisa.',
+    fx: { tech: 1.1, edu: 0.3 }, fac: { youth: 3, business: 2 } },
+  { id: 'digital', cat: 'Tecnologia', icon: '📡', name: 'Banda larga e digitalização', cp: 3, upkeep: 0.8, delay: 4, desc: 'Internet para todos e economia digital.',
+    fx: { tech: 0.8, infra: 0.4, gBonus: 0.15, jobs: 0.2 }, fac: { youth: 3, business: 3 } },
+  // Defesa
+  { id: 'exercito_prof', cat: 'Defesa', icon: '🪖', name: 'Exército profissional', cp: 2, upkeep: 0.8, delay: 3, desc: 'Tropas treinadas e equipadas.',
+    fx: { mil: 1.0, influence: 0.2 }, fac: { military: 6, youth: -1 } },
+  { id: 'industria_def', cat: 'Defesa', icon: '🚀', name: 'Indústria de defesa', cp: 3, upkeep: 1.0, delay: 5, desc: 'Armamento nacional com spin-off tecnológico.',
+    fx: { mil: 1.2, tech: 0.3, gBonus: 0.1 }, fac: { military: 5, business: 2, youth: -2 } },
+  { id: 'serv_militar', cat: 'Defesa', icon: '🎽', name: 'Serviço militar obrigatório', cp: 2, upkeep: 0.2, delay: 2, desc: 'Convocação anual de jovens.',
+    fx: { mil: 1.2, jobs: 0.3 }, fac: { military: 6, youth: -7, religious: 2 } },
+];
+const POL = {};
+for (const p of POLICIES) POL[p.id] = p;
 
-const START_RES = {
-  standard: { name: 'Padrão (200 de cada)', res: { food: 200, wood: 200, gold: 100, stone: 200 } },
-  medium: { name: 'Média (1.000 de cada)', res: { food: 1000, wood: 1000, gold: 1000, stone: 1000 } },
-  high: { name: 'Alta (3.000 de cada)', res: { food: 3000, wood: 3000, gold: 3000, stone: 3000 } },
-};
+// Artigos dos nomes de países (para frases corretas: "do Brasil", "na Índia")
+const ART = { BR: 'o', IN: 'a', NG: 'a', VN: 'o', ID: 'a', MX: 'o', EG: 'o', BD: '', PH: 'as', ET: 'a', TR: 'a', PK: 'o', CO: 'a', AR: 'a', ZA: 'a', RU: 'a', CN: 'a', JP: 'o', DE: 'a', US: 'os', GB: 'o', FR: 'a', KR: 'a', SA: 'a' };
+const de = c => ({ '': 'de ', o: 'do ', a: 'da ', os: 'dos ', as: 'das ' }[ART[c.id] || '']) + c.name;
+const em = c => ({ '': 'em ', o: 'no ', a: 'na ', os: 'nos ', as: 'nas ' }[ART[c.id] || '']) + c.name;
+const para = c => ({ '': 'para ', o: 'para o ', a: 'para a ', os: 'para os ', as: 'para as ' }[ART[c.id] || '']) + c.name;

@@ -2,7 +2,7 @@ name: Publicar no GitHub Pages
 
 on:
   push:
-    branches: [main, claude/upbeat-lovelace-ehg38u]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -22,14 +22,12 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - name: Monta o site (apenas os arquivos do jogo)
+      - name: Monta o site
         run: |
           mkdir _site
           cp -r index.html css js _site/
           touch _site/.nojekyll
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
