@@ -64,4 +64,4 @@ Guerras acontecem em ~57 % das partidas (principalmente invasões de rivais agre
 3. **Metas por país** recalibradas (ex.: Etiópia Top 15, Arábia Saudita Top 12, Índia Top 2, Indonésia Top 4).
 4. **Dificuldades** com gradiente claro (veja a tabela acima).
 5. **Guerra** calibrada para ser decisiva (frente ±100) e menos frequente que no primeiro teste; armistício forçado após 7 anos.
-6. **Pontos de atenção:** Etiópia e Arábia Saudita seguem muito difíceis (≤ 40 % mesmo para expert); a partida inteira dura ~50 turnos (sessão longa: o jogo salva automaticamente).
+6. **Pontos de atenção:** a Etiópia segue muito difícil (40 % mesmo para o expert); China e EUA vencem 100 % com o bot médio (metas Top 1 talvez fáceis demais para quem já é grande); a Arábia Saudita só é vencível pelo expert (0 % no médio); a partida inteira dura ~50 turnos (sessão longa: o jogo salva automaticamente).
