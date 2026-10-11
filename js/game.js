@@ -7,8 +7,10 @@ const Game = {
   w: null,
   get me() { return this.w.byId[this.w.playerId]; },
 
-  start(id, seed) {
+  setDifficulty(d) { this.w.diff = d; },
+  start(id, seed, diff) {
     this.w = makeWorld(id, seed || ((Math.random() * 1e9) | 0));
+    this.w.diff = diff || 'normal';
     const c = this.me;
     c.cp = 8;
     this.w.news = [];
@@ -106,9 +108,11 @@ const Game = {
     // eventos
     const pending = [];
     for (const e of events) if (e.kind === 'global') { const g = GLOBAL_EVENTS[e.type]; pending.push({ id: 'g_' + e.type, who: g.who, icon: g.icon, title: g.title, text: SHOCKS[e.type].text + ` Como ${c.name} deve reagir?`, ch: g.ch }); }
+    const ag = typeof aggressionEvent === 'function' ? aggressionEvent(c, w) : null;
+    if (ag) pending.push(Object.assign({}, ag.ev));
     for (const e of drawEvents(c, w, 2)) pending.push({ id: e.id, who: e.who, icon: e.icon, title: e.title, text: e.text(c, w), ch: e.ch });
     this.w.log.push({ year: w.year, icon: head.icon, text: head.text });
-    return { year: w.year, head, bullets, stats, election, pending, tips: this.advise() };
+    return { year: w.year, head, bullets, stats, election, pending, tips: this.advise(), war: !!w.war };
   },
 
   choose(ev, i) {
@@ -129,10 +133,10 @@ const Game = {
     const c = this.me, w = this.w;
     let title, text;
     if (election && !election.won) { title = 'Derrota nas urnas'; text = `Com ${election.vote.toFixed(0)}% dos votos, você perdeu a eleição de ${election.year}. A oposição assume o governo e o seu projeto de nação termina aqui.`; }
-    else if (r && r.why === 'goal') { title = 'Potência mundial!'; text = `${c.name} alcançou a ${c.rank}ª posição e se manteve entre as ${c.goal} maiores potências por ${WIN_STREAK} anos seguidos. Seu governo entra para a história.`; }
+    else if (r && r.why === 'goal') { title = 'Potência mundial!'; text = `${c.name} alcançou a ${c.rank}ª posição e se manteve entre as ${c.goal} maiores potências por ${D(w).streak} anos seguidos. Seu governo entra para a história.`; }
     else if (r && r.why === 'colapso') { title = 'Colapso do Estado'; text = `A estabilidade desmoronou. Greves, revoltas e crise institucional derrubaram o governo ${de(c)}.`; }
     else if (r && r.why === 'falencia') { title = 'Bancarrota'; text = `A dívida chegou a ${c.debt.toFixed(0)}% do PIB. Os credores tomaram o controle da economia.`; }
-    else { title = r && r.win ? 'Meta alcançada' : `${tierOf(c.rank)} em 2050`; text = `Em ${END_YEAR}, ${c.name} termina na ${c.rank}ª posição (${tierOf(c.rank)}). ${c.rank <= c.goal ? 'Você cumpriu a meta.' : 'A meta era o Top ' + c.goal + '.'}`; }
+    else { title = r && r.win ? 'Posição mantida' : `${tierOf(c.rank)} em 2050`; text = `Em ${END_YEAR}, ${c.name} termina na ${c.rank}ª posição (${tierOf(c.rank)}). ${c.rank <= c.goal ? 'Você cumpriu a meta.' : 'A meta era o Top ' + c.goal + '.'}`; }
     return { title, text, win: !!(r && r.win) };
   },
 

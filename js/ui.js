@@ -2,7 +2,10 @@
 // Interface mobile-first -------------------------------------------------------
 
 const $ = s => document.querySelector(s);
-const ui = { tab: 'painel', chart: 'gdp', polCat: 'Todas', busy: false };
+const ui = { tab: 'painel', chart: 'gdp', polCat: 'Todas', busy: false, diff: 'normal' };
+function goalText(c, w) {
+  return c.startRank <= c.goal ? `Manter Top ${c.goal} até ${END_YEAR}` : `Top ${c.goal} · ${w.streak}/${D(w).streak} anos`;
+}
 const nf = (n, d = 0) => Number(n).toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
 const fmtGdp = bn => bn >= 1000 ? 'US$ ' + nf(bn / 1000, 2) + ' tri' : 'US$ ' + nf(bn, 0) + ' bi';
 const fmtPop = m => m >= 1000 ? nf(m / 1000, 2) + ' bi' : m >= 10 ? nf(m, 0) + ' mi' : nf(m, 1) + ' mi';
@@ -54,10 +57,11 @@ function render() {
   const app = $('#app');
   app.innerHTML = `
     <header class="top">
-      <div class="who"><span class="flag">${c.flag}</span><div><b>${c.name}</b><small>Meta Top ${c.goal} · ${w.streak}/${WIN_STREAK}</small></div></div>
+      <div class="who"><span class="flag">${c.flag}</span><div><b>${c.name}</b><small>${goalText(c, w)}</small></div></div>
       <div class="hud">
         <div class="pill" title="Ano"><b>${w.year}</b><small>${w.year >= END_YEAR ? 'último ano' : (END_YEAR - w.year) + ' anos restantes'}</small></div>
         <div class="pill" title="Posição no ranking de poder"><b>#${c.rank}</b><small>poder ${nf(c.power, 0)}</small></div>
+        ${w.war ? '<div class="pill war" title="País em guerra"><b>⚔️</b><small>guerra</small></div>' : ''}
         <div class="pill cp" title="Capital político: limita leis e acordos"><b>⭐ ${nf(c.cp, 1)}</b><small>capital pol.</small></div>
       </div>
     </header>
@@ -219,9 +223,11 @@ function tabPovo(v) {
   v.innerHTML = `
     <section class="card">
       <div class="gauge ${apprCls}"><b>${nf(c.approval, 0)}%</b><small>aprovação do governo</small></div>
-      <p class="center">🗳️ Próxima eleição em <b>${next} ${next === 1 ? 'ano' : 'anos'}</b> (${w.year + next}). Projeção de votos: <b>~${nf(clamp(c.approval + INCUMBENT, 0, 100), 0)}%</b> (precisa de 50%).</p>
+      <p class="center regime ${c.pol.autoritarismo ? 'bad' : ''}">${c.pol.autoritarismo ? '🦅 Regime autoritário: sem eleições; estabilidade pela força.' : '🏛️ Democracia'}</p>
+      ${c.pol.autoritarismo ? '' : `<p class="center">🗳️ Próxima eleição em <b>${next} ${next === 1 ? 'ano' : 'anos'}</b> (${w.year + next}). Projeção de votos: <b>~${nf(clamp(c.approval + D(w).inc, 0, 100), 0)}%</b> (precisa de 50%).</p>`}
       <p class="dim center">Estabilidade: ${nf(c.stab, 0)}/100 — abaixo de 25 o risco de golpe e revoltas cresce.</p>
     </section>
+    ${w.war ? warCard(c, w) : ''}
     <section class="card"><h3>Facções</h3>
       ${FACTIONS.map(f => `<div class="faction"><div class="fh"><span class="fi">${f.icon}</span><div><b>${f.name}</b><small>peso político ${nf(sh[f.id] * 100, 0)}%</small></div><span class="fs ${sat(c.sat[f.id])}">${nf(c.sat[f.id], 0)}%</span></div>
         ${bar(c.sat[f.id], 100, sat(c.sat[f.id]))}<small class="dim">${f.desc}</small></div>`).join('')}
@@ -238,6 +244,12 @@ function tabPovo(v) {
         ${statCard('Pobreza', nf(poverty(c), 0) + '%', `desigualdade ${nf(c.ineq, 0)}`)}
       </div>
     </section>`;
+}
+function warCard(c, w) {
+  const i = warInfo(c, w);
+  return `<section class="card warcard"><h3>⚔️ Guerra contra ${i.foe.flag} ${i.foe.name}</h3>
+    <div class="front"><i style="left:${(i.front + 100) / 2}%"></i></div><div class="legend"><span>derrota</span><span>frente ${nf(i.front, 0)}</span><span>vitória</span></div>
+    <p class="dim">Força relativa: <b>${nf(i.R * 100, 0)}%</b> do inimigo · fadiga ${nf(c.fatigue || 0, 0)} · mobilização ${c.mobil || 0}/2 · ${i.years} ${i.years === 1 ? 'ano' : 'anos'} de guerra.</p></section>`;
 }
 const sat = x => x >= 55 ? 'good' : x >= 40 ? 'mid' : 'bad';
 
@@ -262,17 +274,23 @@ async function countryModal(id) {
   const mine = id === c.id;
   const rel = mine ? 100 : w.rel[c.id][o.id];
   const deal = mine ? { ok: false } : dealCheck(c, w, o), tt = mine ? { ok: false } : techCheck(c, w, o);
+  const wc = mine ? { ok: false } : warCheck(c, w, o);
   const html = `<div class="chead"><span class="flagbig">${o.flag}</span><div><h2>${o.name}</h2><small>#${o.rank} em poder · ${fmtGdp(o.pop * o.gdpPc)} · ${fmtPop(o.pop)}</small></div></div>
     <div class="grid2 s">${statCard('PIB per capita', 'US$ ' + nf(o.gdpPc, 1) + ' mil')}${statCard('Crescimento', sign(o.g) + '%')}${statCard('Tecnologia', nf(o.tech, 0))}${statCard('Força militar', nf(o.mil, 0))}${statCard('Educação', nf(o.edu, 0))}${statCard('Influência', nf(o.influence, 0))}</div>
     ${mine ? '' : `<p class="center">Relação com você: <b>${nf(rel, 0)}</b>/100 ${bar(rel, 100, rel > 55 ? 'good' : rel > 40 ? 'mid' : 'bad')}</p><p class="dim center">${c.ag.indexOf(o.id) >= 0 ? '🤝 Acordo comercial em vigor.' : ''}</p>`}`;
   const btns = mine ? [{ label: 'Fechar' }] : [
     { label: '🤝 Acordo comercial', hint: deal.ok ? '⭐2 · +crescimento, +influência' : deal.why, dis: !deal.ok },
     { label: '🔬 Transferência de tecnologia', hint: tt.ok ? '⭐3 · +4 tecnologia · dívida +1,5%' : tt.why, dis: !tt.ok },
+    { label: '⚔️ Declarar guerra', hint: wc.ok ? `⭐4 · força relativa ${nf(warStrength(c) / warStrength(o) * 100, 0)}% · 🎖️+ 🎓−` : wc.why, dis: !wc.ok, cls: 'danger' },
     { label: 'Fechar', cls: 'ghost' }];
   const i = await modal(html, btns, { dismiss: true });
   if (mine) return;
   if (i === 0) { const r = makeDeal(c, w, o); if (r.ok) { toast('Acordo comercial assinado com ' + o.name, 'good'); w.log.push({ year: w.year, icon: '🤝', text: 'Acordo comercial com ' + o.name }); } renderTab(); refreshHud(); }
   if (i === 1) { const r = techTransfer(c, w, o); if (r.ok) toast('Tecnologia transferida: +4', 'good'); renderTab(); refreshHud(); }
+  if (i === 2) {
+    const ok = await modal(`<div class="evt"><h2>⚔️ Declarar guerra a ${o.name}?</h2><p>Guerra custa vidas, dinheiro e apoio popular. Você decidirá a estratégia a cada ano. Força relativa estimada: <b>${nf(warStrength(c) / warStrength(o) * 100, 0)}%</b>.</p></div>`, [{ label: 'Declarar guerra', cls: 'danger' }, { label: 'Cancelar', cls: 'ghost' }]);
+    if (ok === 0) { declareWar(c, w, o); toast('Guerra declarada!', 'bad'); Game.save(); render(); }
+  }
 }
 
 // ---------------------------------------------------------------- fluxo do ano
@@ -315,6 +333,20 @@ async function showEnd(summary) {
   if (i === 0) showCountrySelect(); else showTitle();
 }
 
+async function showWar() {
+  const c = Game.me, w = Game.w;
+  const i = warInfo(c, w);
+  const html = `<div class="evt"><div class="advisor big"><span class="av">${ADVISORS.gen.icon}</span><div><b>${ADVISORS.gen.name}</b><small>Estado-Maior</small></div></div>
+    <h2>⚔️ Guerra contra ${i.foe.flag} ${i.foe.name}</h2>
+    <div class="front"><i style="left:${(i.front + 100) / 2}%"></i></div><div class="legend"><span>derrota</span><span>frente ${nf(i.front, 0)}</span><span>vitória</span></div>
+    <p>Sua força é <b>${nf(i.R * 100, 0)}%</b> da inimiga. Fadiga da população: ${nf(c.fatigue || 0, 0)}/100 · mobilização ${c.mobil || 0}/2 · ${i.years} ${i.years === 1 ? 'ano' : 'anos'} de guerra. Qual será a estratégia deste ano?</p></div>`;
+  const acts = WAR_ACTIONS.filter(a => !a.req || a.req(c));
+  const k = await modal(html, acts.map(a => ({ label: a.icon + ' ' + a.name, hint: a.desc, cls: a.peace ? 'ghost' : '' })), { cls: 'event' });
+  const r = warTurn(c, w, acts[k].id);
+  recalcStance(c); computeSat(c, w); updateRanks(w);
+  await modal(`<div class="evt"><h3>${acts[k].icon} ${acts[k].name}</h3><p class="result">${r.text}</p></div>`, [{ label: 'Entendido' }]);
+}
+
 async function playYear() {
   if (ui.busy) return;
   ui.busy = true;
@@ -326,6 +358,7 @@ async function playYear() {
       await showElection(r.election);
       if (!r.election.won) { await showEnd(Game.summary(null, r.election)); ui.busy = false; return; }
     }
+    if (Game.w.war) await showWar();
     const end = Game.end();
     if (end) { await showEnd(Game.summary(end)); ui.busy = false; return; }
     Game.save();
@@ -351,20 +384,22 @@ function showHelp() {
     <p><b>Objetivo:</b> levar seu país ao <b>Top N</b> do ranking de poder mundial e se manter lá por ${WIN_STREAK} anos (N depende do país). Em ${END_YEAR} o jogo termina.</p>
     <p><b>A cada ano:</b> ajuste o <b>Orçamento</b>, aprove <b>Leis</b> (custam ⭐ capital político), converse com os <b>conselheiros</b> e toque em <b>Próximo ano</b>. Eventos exigem decisões com ônus e bônus.</p>
     <p><b>Povo:</b> 6 facções avaliam seu governo. A cada ${TERM} anos há <b>eleição</b>: perder significa o fim do jogo. Cuidado também com golpes e colapso.</p>
+    <p><b>Guerra:</b> rivais agressivos podem invadir seu país, e você pode declarar guerra a outros. Cada ano de guerra você escolhe a estratégia (ofensiva, defesa, desgaste, bloqueio, mobilização) ou negocia a paz. Guerra custa vidas, dinheiro e apoio. <b>Regime autoritário</b> (em Leis) suspende eleições, mas sufoca inovação e a juventude.</p>
     <p><b>Dicas:</b> educação, saúde e infraestrutura rendem a longo prazo; déficits viram dívida e inflação; leis têm efeito atrasado; corrupção desperdiça gastos; o <b>Mundo</b> tem acordos comerciais e transferência de tecnologia.</p>`, [{ label: 'Entendi' }], { dismiss: true });
 }
 function showCountrySelect() {
   const list = COUNTRIES.slice().sort((a, b) => b.diff - a.diff || b.pop * b.gdp - a.pop * a.gdp);
   $('#app').innerHTML = `<div class="select"><header class="sh"><button class="btn small ghost" id="back">←</button><div><h2>Escolha seu país</h2><small>Comece pelos países em desenvolvimento: o desafio é maior</small></div></header>
+    <div class="diffsel">${Object.entries(DIFFS).map(([k, d]) => `<button class="chip ${ui.diff === k ? 'on' : ''}" data-diff="${k}">${d.name}</button>`).join('')}</div>
     <div class="clist">${list.map(c => `<article class="ccard" data-id="${c.id}"><span class="flagbig">${c.flag}</span><div class="ci"><b>${c.name}</b><small>${fmtPop(c.pop)} · US$ ${nf(c.gdp, 1)} mil per capita · meta Top ${c.goal}</small><p>${c.blurb}</p><div class="stars">${'★'.repeat(c.diff)}${'☆'.repeat(5 - c.diff)} <small>dificuldade</small></div></div></article>`).join('')}</div></div>`;
   $('#back').onclick = showTitle;
   $('.clist').onclick = async e => {
     const a = e.target.closest('.ccard'); if (!a) return;
     const id = a.dataset.id;
     const d = COUNTRIES.find(x => x.id === id);
-    const b = Game.start(id);
+    const b = Game.start(id, null, ui.diff);
     const c = Game.me;
-    const html = `<div class="chead"><span class="flagbig">${c.flag}</span><div><h2>${c.name}, ${START_YEAR}</h2><small>Meta: Top ${c.goal} do mundo por ${WIN_STREAK} anos</small></div></div>
+    const html = `<div class="chead"><span class="flagbig">${c.flag}</span><div><h2>${c.name}, ${START_YEAR}</h2><small>${goalText(c, Game.w)} · dificuldade ${DIFFS[ui.diff].name}</small></div></div>
       <p>${b.blurb}</p><h3>Seus maiores desafios</h3>
       ${b.issues.map(i => `<div class="advisor"><span class="av">${ADVISORS[i.who].icon}</span><div><b>${ADVISORS[i.who].name}</b><p>${i.text}</p></div></div>`).join('')}`;
     const i = await modal(html, [{ label: 'Assumir o governo' }, { label: 'Escolher outro', cls: 'ghost' }]);
@@ -377,6 +412,7 @@ document.addEventListener('click', e => {
   const t = e.target.closest('[data-tab]');
   if (t && $('#view')) { ui.tab = t.dataset.tab; document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b === t)); renderTab(); return; }
   if (e.target.closest('#next')) { playYear(); return; }
+  const df = e.target.closest('[data-diff]'); if (df) { ui.diff = df.dataset.diff; document.querySelectorAll('[data-diff]').forEach(b => b.classList.toggle('on', b === df)); return; }
   const ch = e.target.closest('[data-chart]'); if (ch) { ui.chart = ch.dataset.chart; renderTab(); return; }
   const ct = e.target.closest('[data-cat]'); if (ct) { ui.polCat = ct.dataset.cat; renderTab(); return; }
   const en = e.target.closest('[data-enact]');

@@ -142,3 +142,11 @@ input[type=range]{width:100%;height:34px;accent-color:var(--acc);margin:0}
 .ccard:active{background:var(--card2)}
 .ci p{font-size:.88rem;color:#c3d1e0;margin:4px 0}.stars{color:var(--gold);letter-spacing:2px}
 .ci b{display:block;font-size:1.05rem}.ci>small{display:block;margin-bottom:2px}.stars small{letter-spacing:0}
+.pill.war{border-color:var(--bad);animation:pulse 1.6s infinite}.pill.war b{color:var(--bad)}
+@keyframes pulse{50%{box-shadow:0 0 12px #ff6b6b88}}
+.btn.danger{background:linear-gradient(#c24545,#8f2b2b)}
+.front{position:relative;height:14px;border-radius:7px;margin:12px 0 4px;background:linear-gradient(90deg,#c24545,#5a5a5a 50%,#3fa86a)}
+.front i{position:absolute;top:-4px;width:6px;height:22px;background:#fff;border-radius:3px;transform:translateX(-3px);box-shadow:0 0 6px #000}
+.warcard{border-color:var(--bad)}
+.diffsel{display:flex;gap:6px;padding:8px 12px;background:#0b121a;position:sticky;top:57px;z-index:9}
+.regime{font-weight:600;margin-bottom:4px}

@@ -28,5 +28,12 @@ e precisa levá-la ao grupo das grandes potências enquanto os demais países ta
 - **Eventos:** crises e oportunidades com escolhas de ônus e bônus.
 - **Mundo:** 23 IAs usando as mesmas regras, preços de commodities, crises globais, acordos comerciais e transferência de tecnologia.
 
+## Guerra, regime e dificuldade (v2)
+- **Guerra por turnos:** a cada ano o jogador escolhe a estratégia (ofensiva total, defesa em profundidade, desgaste, bloqueio, mobilização) ou negocia a paz. A *frente de batalha* (-100 a +100) depende da força relativa (militar x tecnologia x economia), custa dinheiro, vidas e apoio (fadiga de guerra) e termina em vitória, derrota ou armistício.
+- **Como começa:** rivais agressivos invadem países mais fracos (evento com 3 respostas) ou o jogador declara guerra (⭐4). IAs também guerreiam entre si.
+- **Regime autoritário:** lei que suspende eleições e dá estabilidade pela força, ao custo de inovação, corrupção e legitimidade (juventude e trabalhadores revoltados).
+- **Dificuldade:** Fácil, Normal e Difícil mudam a competência das IAs, a severidade das crises, a vantagem eleitoral, o capital político e os anos necessários no Top N.
+- **Regra de vitória:** países que sobem vencem ao manter o Top N (8/10/14 anos); potências já no topo precisam manter a posição até 2050.
+
 ## Fora do MVP (próximas fases)
-Guerra e camada tática, regimes autoritários, sanções e alianças, cenários históricos (outras épocas), multi-idioma.
+Sanções e alianças militares, cenários históricos (outras épocas), multi-idioma, mais de uma guerra simultânea.

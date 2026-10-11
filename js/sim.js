@@ -1,6 +1,7 @@
 'use strict';
 // Simulação: países, economia, demografia, política, mundo e IA ---------------
 
+const D = w => DIFFS[w.diff || 'normal'];
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const lerp = (a, b, t) => a + (b - a) * t;
 function rnd(w) { w.rs = (w.rs + 0x6d2b79f5) | 0; let t = Math.imul(w.rs ^ (w.rs >>> 15), 1 | w.rs); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }
@@ -37,7 +38,7 @@ function makeCountry(d, w) {
 }
 
 function makeWorld(playerId, seed) {
-  const w = { rs: seed | 0, year: START_YEAR, turn: 0, playerId, worldA: 1, commPrice: 100, globalG: 3, shock: null, news: [], over: null, streak: 0, rel: {}, log: [], evCd: {}, sched: [] };
+  const w = { diff: 'normal', war: null, rs: seed | 0, year: START_YEAR, turn: 0, playerId, worldA: 1, commPrice: 100, globalG: 3, shock: null, news: [], over: null, streak: 0, rel: {}, log: [], evCd: {}, sched: [] };
   w.countries = COUNTRIES.map(d => makeCountry(d, w));
   w.byId = {}; for (const c of w.countries) w.byId[c.id] = c;
   for (const a of w.countries) { w.rel[a.id] = {}; for (const b of w.countries) if (a !== b) w.rel[a.id][b.id] = 40 + Math.floor(rnd(w) * 25); }
@@ -49,7 +50,7 @@ function makeWorld(playerId, seed) {
     { year: START_YEAR + 39 + Math.floor(rnd(w) * 4), type: 'crise_clima' },
   ];
   updateRanks(w);
-  for (const c of w.countries) recordHist(c, w);
+  for (const c of w.countries) { recordHist(c, w); c.startRank = c.rank; }
   return w;
 }
 
@@ -109,7 +110,7 @@ function computeSat(c, w) {
   c.shares = sh;
   let a = 0; for (const f of FACTIONS) a += sh[f.id] * c.sat[f.id];
   c.approval = a;
-  c.stab = clamp(0.5 * a + 0.3 * (100 - c.crime) + 0.2 * Math.min(100, c.rating + 20) - 3 * Math.max(0, c.infl - 15) * 0.3, 0, 100);
+  c.stab = clamp(0.5 * a + 0.3 * (100 - c.crime) + 0.2 * Math.min(100, c.rating + 20) - 3 * Math.max(0, c.infl - 15) * 0.3 + (c.pol.autoritarismo ? 14 : 0) - (c.war ? 0.2 * (c.fatigue || 0) : 0), 0, 100);
 }
 
 // ---------------------------------------------------------------------------
@@ -173,17 +174,18 @@ function stepCountry(c, w) {
   c.collectB = clamp(c.collectB + (acc.collect || 0) / 100, 0, 0.15);
   c.pensionMod = clamp(c.pensionMod + (acc.pension || 0), 0.5, 1.3);
   const direct = ['edu', 'health', 'infra', 'tech', 'ineq', 'corr', 'crime', 'pollution', 'jobs', 'mil', 'influence', 'comm', 'infl'];
-  for (const k of direct) if (acc[k]) c[k] += acc[k];
+  const sat = ['edu', 'health', 'infra', 'tech', 'mil', 'influence'];
+  for (const k of direct) if (acc[k]) c[k] += (sat.indexOf(k) >= 0 && acc[k] > 0) ? acc[k] * Math.max(0.05, 1 - c[k] / 100) * 1.4 : acc[k];
 
   // --- gastos -> estoques
   const eff = 1 - c.corr / 170;
   const S = c.sp;
-  c.edu += grow(c.edu, S.edu, eff, 2.2, 0.75);
-  c.health += grow(c.health, S.health, eff, 2.2, 0.75) - 0.012 * Math.max(0, c.pollution - 50);
-  c.infra += grow(c.infra, S.infra, eff, 1.6, 0.8);
-  const absorb = Math.max(0, 94 - c.tech) * 0.016 * (0.25 + 0.75 * c.open / 100) * Math.pow(c.edu / 100, 1.5) * (1 + 0.1 * c.ag.length);
-  c.tech += grow(c.tech, S.rd, eff, 0.3, 1.2) + absorb;
-  c.mil += grow(c.mil, S.def, eff, 1.5, 0.9);
+  c.edu += grow(c.edu, S.edu, eff, 2.2, 0.6);
+  c.health += grow(c.health, S.health, eff, 2.2, 0.6) - 0.012 * Math.max(0, c.pollution - 50);
+  c.infra += grow(c.infra, S.infra, eff, 1.6, 0.62);
+  const absorb = Math.max(0, 94 - c.tech) * 0.013 * (0.25 + 0.75 * c.open / 100) * Math.pow(c.edu / 100, 1.5) * (1 + 0.1 * c.ag.length);
+  c.tech += grow(c.tech, S.rd, eff, 0.3, 0.9) + absorb;
+  c.mil += grow(c.mil, S.def, eff, 1.5, 0.8);
   c.influence += (0.5 * gdpScale(c) + 0.25 * c.mil + 0.25 * c.tech - c.influence) * 0.07;
   c.ineq += 0.12 * (c.comm - 40) / 40 + 0.05 * (c.g - 3) - (S.welf * eff) * 0.30 - 0.012 * (c.edu - 50);
   c.crime += 0.04 * (c.ineq - 45) - (S.pol * eff - 1.2) * 1.1 + 0.025 * (poverty(c) - 30) + 0.008 * (c.urban - 50);
@@ -194,7 +196,7 @@ function stepCountry(c, w) {
   const Z = 0.30 * c.tech + 0.20 * c.edu + 0.20 * c.infra + 0.15 * (100 - c.corr) + 0.15 * c.health;
   const pot = 48 * Math.pow(clamp(Z, 1, 100) / 100, 2.6) * w.worldA;
   const gap = pot / c.gdpPc - 1;
-  let g = clamp(gap * 3.4, -3, 8);
+  let g = clamp(gap * 3.0, -3, 7);
   g += c.gBonus;
   g += ((c.open - 50) / 100) * (w.globalG - 2) * 0.4 + c.ag.length * 0.12;
   g -= 0.10 * (c.tax - 25);
@@ -252,7 +254,7 @@ function stepCountry(c, w) {
   for (const f of FACTIONS) c.shock[f.id] *= 0.55;
   recalcStance(c);
   computeSat(c, w);
-  c.cp = Math.min(12, c.cp + 3 + (c.approval - 50) / 20 + (c.stab > 70 ? 0.5 : 0));
+  c.cp = Math.min(12, c.cp + 3 + (c.approval - 50) / 20 + (c.stab > 70 ? 0.5 : 0) + (c.id === w.playerId ? D(w).cp : 0));
   recordHist(c, w);
   return { prev };
 }
@@ -294,7 +296,7 @@ function stepWorld(w, playerReport) {
     if (!s.done && s.year <= w.year) {
       s.done = true;
       const d = SHOCKS[s.type];
-      w.shock = { type: s.type, name: d.name, g: d.g, infl: d.infl, left: d.years, worldA: d.worldA };
+      w.shock = { type: s.type, name: d.name, g: d.g * (d.g < 0 ? D(w).shock : 1), infl: d.infl, left: d.years, worldA: d.worldA };
       w.log.push({ year: w.year, icon: d.icon, text: d.name + ': ' + d.text });
       events.push({ kind: 'global', type: s.type });
     }
@@ -305,6 +307,7 @@ function stepWorld(w, playerReport) {
     if (c.id !== w.playerId) aiAct(c, w);
     stepCountry(c, w);
   }
+  if (typeof aiWars === 'function') aiWars(w);
   // acordos de IA
   for (const c of w.countries) {
     if (c.id === w.playerId) continue;
@@ -345,7 +348,7 @@ function aiAct(c, w) {
   // leis
   // erros e crises políticas das IAs
   if (rnd(w) < 0.05) { c.gdpPc *= 1 - (0.02 + rnd(w) * 0.04); c.corr += 3; c.stab = Math.max(0, c.stab - 5); for (const k in c.pol) if (rnd(w) < 0.2) delete c.pol[k]; }
-  if (c.cp >= 3 && rnd(w) < 0.5 * c.ai.skill) {
+  if (c.cp >= 3 && rnd(w) < (c.id === w.playerId ? 0.5 * c.ai.skill : 0.8 * c.ai.skill * D(w).skill)) {
     let best = null, bs = 0.45;
     for (const p of POLICIES) {
       if (!canEnact(c, p.id).ok) continue;
@@ -360,17 +363,17 @@ function aiAct(c, w) {
 // ---------------------------------------------------------------------------
 // Resultado, eleição, derrota
 // ---------------------------------------------------------------------------
-const INCUMBENT = 8; // vantagem de quem governa
-function electionYear(w) { return w.turn > 0 && w.turn % TERM === 0; }
+function electionYear(w) { return w.turn > 0 && w.turn % TERM === 0 && !w.byId[w.playerId].pol.autoritarismo; }
 function runElection(c, w) {
-  const vote = clamp(c.approval + INCUMBENT + gauss(w) * 2.5 + (c.g > 4 ? 2 : 0) - (c.infl > 12 ? 3 : 0), 0, 100);
+  const vote = clamp(c.approval + D(w).inc + gauss(w) * 2.5 + (c.g > 4 ? 2 : 0) - (c.infl > 12 ? 3 : 0), 0, 100);
   return { vote, won: vote >= 50 };
 }
 function checkEnd(w) {
   const p = w.byId[w.playerId];
-  const goal = p.goal;
+  const goal = p.goal, climber = p.startRank > goal;
   if (p.rank <= goal) w.streak++; else w.streak = 0;
-  if (w.streak >= WIN_STREAK) return { win: true, why: 'goal' };
+  // quem sobe: vitória antecipada após manter o Top N; quem já é potência precisa se manter até o fim
+  if (climber && w.streak >= D(w).streak && w.year >= START_YEAR + 15) return { win: true, why: 'goal' };
   if (p.stab <= 8) return { win: false, why: 'colapso' };
   if (p.debt > 300) return { win: false, why: 'falencia' };
   if (w.year >= END_YEAR) return { win: p.rank <= goal, why: 'fim' };
