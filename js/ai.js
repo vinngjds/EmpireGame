@@ -52,6 +52,8 @@ class AIPlayer {
     }
     this.tcs = this.bt.towncenter || [];
     this.base = this.tcs[0] || p.blds.find(b => !b.dead) || { x: p.start.x, y: p.start.y, w: 4, tx: p.start.x - 2, ty: p.start.y - 2 };
+    const r = p.res;
+    this.rich = Math.min(r.food, r.wood, r.gold, r.stone) > 2500;
     // vilarejos na fila de treino
     this.queuedVils = 0;
     for (const t of this.tcs) for (const q of t.queue) if (q.id === 'villager') this.queuedVils++;
@@ -110,6 +112,7 @@ class AIPlayer {
     if (nxt === 1) want = vils >= Math.min(lv.vils * 0.5, 22) && g.time > 120;
     if (nxt === 2) want = vils >= Math.min(lv.vils * 0.7, 36) && (this.n('barracks') + this.n('archeryrange') + this.n('stable')) >= 2;
     if (nxt === 3) want = vils >= lv.vils * 0.8 && this.mil.length >= 12 && this.p.pop > 90 && (g.time > 1500 || this.level !== 'easy');
+    if (this.rich && vils >= 12 && g.time > 60) want = true;
     if (!want) return;
     const id = 'age' + nxt;
     // reserva recursos para a evolução
@@ -117,7 +120,16 @@ class AIPlayer {
     for (const r in cost) this.reserve[r] = (this.reserve[r] || 0) + cost[r];
     if (!g.techAvailable(p, id)) return;
     if (!g.ageReqMet(p, nxt)) { this.buildForAge(nxt); return; }
-    for (const tc of this.tcs) if (!tc.queue.length || tc.queue.length < 2) { if (g.queueTech(tc, id)) { this.reserve = {}; return; } }
+    for (const tc of this.tcs) {
+      if (tc.queue.length >= 6) continue;
+      if (g.queueTech(tc, id)) {
+        // evolução de era passa à frente da fila de treino
+        const it = tc.queue.pop();
+        tc.queue.splice(Math.min(1, tc.queue.length), 0, it);
+        this.reserve = {};
+        return;
+      }
+    }
   }
   buildForAge(nxt) {
     const rq = AGE_REQ[nxt];
@@ -138,7 +150,7 @@ class AIPlayer {
     if (total >= target) return;
     const cost = g.unitCost(p, 'villager');
     for (const tc of this.tcs) {
-      if (tc.queue.length >= 2) continue;
+      if (tc.queue.length >= (this.rich ? 4 : 2)) continue;
       if (p.pop + tc.queue.length >= p.popCap) break;
       if (!this.afford(cost, this.reserve)) break;
       // prioridade: nunca deixe o treino parar
@@ -153,11 +165,11 @@ class AIPlayer {
     const g = this.g, p = this.p;
     if (p.popCap >= 200) return;
     const pop = p.pop + this.queuedVils;
-    const margin = pop < 30 ? 4 : pop < 70 ? 8 : 12;
+    const margin = this.rich ? 25 : pop < 30 ? 4 : pop < 70 ? 8 : 12;
     let incCap = 0;
     for (const b of this.inc.house || []) incCap += 5;
     if (p.popCap + incCap - pop > margin) return;
-    const maxParallel = pop > 80 ? 3 : pop > 40 ? 2 : 1;
+    const maxParallel = this.rich ? 5 : pop > 80 ? 3 : pop > 40 ? 2 : 1;
     if (this.ninc('house') >= maxParallel) return;
     if (!this.afford(g.buildCost(p, 'house'), null)) return;
     this.houseAng += 0.7;
@@ -191,7 +203,7 @@ class AIPlayer {
     // Castelo para unidade única / defesa
     if (p.age >= 2 && this.level !== 'easy' && this.ntot('castle') === 0 && p.res.stone >= 700 && vils > 30) this.buildOne('castle');
     // 2º Centro da Cidade em partidas longas
-    if (p.age >= 2 && this.ntot('towncenter') < 2 && this.level !== 'easy' && p.res.wood > 600 && p.res.stone > 400 && vils > 40) this.tryBuild('towncenter', this.base.x, this.base.y, 14, 24, 1, 3);
+    if (p.age >= 1 && this.ntot('towncenter') < (this.rich ? 3 : 2) && this.level !== 'easy' && p.res.wood > 450 && p.res.stone > 250 && vils > (this.level === 'moderate' ? 40 : 28)) this.tryBuild('towncenter', this.base.x, this.base.y, 14, 24, 1, 3);
   }
   wantedFarms(berries) {
     const food = this.vils.length * 0.42;
@@ -205,7 +217,7 @@ class AIPlayer {
     const g = this.g, p = this.p;
     const vils = this.vils.length;
     const lv = this.lv;
-    const early = vils < Math.min(lv.vils * 0.35, 14);
+    const early = !this.rich && vils < Math.min(lv.vils * 0.35, 14);
     if (early) return;
     const want = (type, n) => {
       if (BUILDINGS[type].age > p.age) return;
@@ -215,11 +227,12 @@ class AIPlayer {
     };
     const mult = this.level === 'easy' ? 1 : this.level === 'moderate' ? 1.5 : 2;
     const scale = Math.max(1, Math.round(mult * (1 + vils / 40)));
-    want('barracks', Math.min(1 + (p.age >= 1 ? 1 : 0) + (vils > 45 ? 1 : 0), scale + 1));
-    want('archeryrange', Math.min(1 + (vils > 50 ? 1 : 0), scale));
-    want('stable', Math.min(1 + (vils > 55 ? 1 : 0), scale));
+    const rb = this.rich ? 2 : 0;
+    want('barracks', Math.min(1 + (p.age >= 1 ? 1 : 0) + (vils > 45 ? 1 : 0), scale + 1) + rb);
+    want('archeryrange', Math.min(1 + (vils > 50 ? 1 : 0), scale) + rb);
+    want('stable', Math.min(1 + (vils > 55 ? 1 : 0), scale) + rb);
     want('blacksmith', 1);
-    if (p.age >= 2 && this.level !== 'easy') { want('siegeworkshop', 1); want('market', 1); }
+    if (p.age >= 2 && this.level !== 'easy') { want('siegeworkshop', this.rich ? 2 : 1); want('market', 1); }
   }
 
   // serrarias e acampamentos de mineração: construídos de forma proativa
@@ -261,7 +274,7 @@ class AIPlayer {
   buildOne(type) {
     const b = this.base;
     const sz = BUILDINGS[type].size;
-    let minR = 5, maxR = 18, gap = 1, nb = 2;
+    let minR = 5, maxR = 18, gap = 1, nb = this.rich ? 3 : 2;
     if (type === 'house') { minR = 5; maxR = 20; gap = 0; nb = 1; }
     return this.tryBuild(type, b.x, b.y, minR, maxR, gap, nb, type === 'house');
   }
@@ -495,7 +508,7 @@ class AIPlayer {
     const vils = this.vils.length;
     const lv = this.lv;
     const threatened = p.lastHit && g.time - p.lastHit < 20;
-    if (vils < Math.min(lv.vils * 0.35, 12) && !threatened) return;
+    if (!this.rich && vils < Math.min(lv.vils * 0.35, 12) && !threatened) return;
     if (p.pop >= p.popCap) return;
     // evita deixar a economia travada por exército demais
     const milCap = Math.floor(p.popCap * (this.level === 'easy' ? 0.5 : 0.65));
@@ -516,7 +529,7 @@ class AIPlayer {
     };
     for (const b of p.blds) {
       if (b.dead || !b.complete || !BUILDINGS[b.type].units || b.type === 'towncenter') continue;
-      if (b.queue.length >= 2) continue;
+      if (b.queue.length >= (this.rich ? 4 : 2)) continue;
       if (p.pop + b.queue.length >= p.popCap) break;
       const id = choose(b);
       if (!id) continue;
@@ -583,7 +596,7 @@ class AIPlayer {
       }
     }
     if (this.phase === 'build') {
-      const ready = army.length >= this.waveSize && g.time > lv.firstAttack * (this.level === 'easy' ? 1 : 0.8) && p.age >= 1;
+      const ready = army.length >= this.waveSize && g.time > (this.noAttackUntil || 0) && g.time > lv.firstAttack * (this.level === 'easy' ? 1 : 0.8) && p.age >= 1;
       if (ready) {
         const tq = this.pickTarget();
         if (!tq) return;

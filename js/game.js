@@ -348,9 +348,9 @@ class Game {
         if (e.kind === 'res' && dist(e.x, e.y, s.x, s.y) < 8) this.removeRes(e);
       }
       const tcx = s.x - 2, tcy = s.y - 2;
-      for (let y = tcy; y < tcy + 4; y++) for (let x = tcx; x < tcx + 4; x++) { const i = w.idx(x, y); if (w.terrain[i] === T_WATER) { w.terrain[i] = T_GRASS; w.blk[i] = 0; w.color[i] = 'hsl(100,45%,36%)'; } }
+      for (let y = tcy; y < tcy + 4; y++) for (let x = tcx; x < tcx + 4; x++) { const i = w.idx(x, y); if (w.terrain[i] === T_WATER) { w.terrain[i] = T_GRASS; w.blk[i] = 0; w.cidx[i] = w.palIndex('hsl(100,45%,36%)'); } }
       // limpa água no entorno imediato
-      for (let y = s.y - 9; y <= s.y + 9; y++) for (let x = s.x - 9; x <= s.x + 9; x++) { if (!w.inb(x, y)) continue; const i = w.idx(x, y); if (w.terrain[i] === T_WATER && dist(x, y, s.x, s.y) < 9) { w.terrain[i] = T_GRASS; w.blk[i] = 0; w.color[i] = 'hsl(100,45%,36%)'; } }
+      for (let y = s.y - 9; y <= s.y + 9; y++) for (let x = s.x - 9; x <= s.x + 9; x++) { if (!w.inb(x, y)) continue; const i = w.idx(x, y); if (w.terrain[i] === T_WATER && dist(x, y, s.x, s.y) < 9) { w.terrain[i] = T_GRASS; w.blk[i] = 0; w.cidx[i] = w.palIndex('hsl(100,45%,36%)'); } }
       const tc = this.addBuilding('towncenter', p.idx, tcx, tcy, true);
       tc.hp = tc.maxhp;
       const rnd = (a, b) => a + rng() * (b - a);

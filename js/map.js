@@ -9,7 +9,9 @@ class World {
     this.terrain = new Uint8Array(n * n);
     this.blk = new Uint8Array(n * n);      // bloqueia movimento
     this.occ = new Int32Array(n * n);      // id da entidade que ocupa o tile (construção/recurso)
-    this.color = new Array(n * n);         // cor pré-calculada do tile
+    this.cidx = new Uint8Array(n * n);     // índice da cor do tile na paleta
+    this.palette = [];
+    this._palMap = new Map();
     this.tuft = new Uint8Array(n * n);     // decoração
     // estruturas do A*
     this._g = new Float32Array(n * n);
@@ -18,6 +20,11 @@ class World {
     this._closed = new Uint32Array(n * n);
     this._cur = 0;
     this._heap = new Heap();
+  }
+  palIndex(col) {
+    let i = this._palMap.get(col);
+    if (i === undefined) { i = this.palette.length; this.palette.push(col); this._palMap.set(col, i); }
+    return i;
   }
   idx(tx, ty) { return ty * this.n + tx; }
   inb(tx, ty) { return tx >= 0 && ty >= 0 && tx < this.n && ty < this.n; }
@@ -155,14 +162,15 @@ function generateTerrain(n, mapType, seed, starts) {
     }
     w.terrain[i] = t;
     if (t === T_WATER) w.blk[i] = 1;
-    // cor
+    // cor (quantizada em uma paleta pequena para desenhar em lotes)
     const v = hash2(tx, ty, seed + 3);
+    const vb = Math.floor(v * 6), nb = Math.floor(nv * 5);
     if (t === T_WATER) {
-      w.color[i] = 'hsl(205,55%,' + (38 + v * 6).toFixed(1) + '%)';
+      w.cidx[i] = w.palIndex('hsl(205,55%,' + (38 + vb) + '%)');
     } else if (t === T_DIRT) {
-      w.color[i] = 'hsl(' + (38 + v * 6).toFixed(0) + ',' + (32 + v * 6).toFixed(0) + '%,' + (44 + v * 5 + nv * 6).toFixed(1) + '%)';
+      w.cidx[i] = w.palIndex('hsl(' + (38 + vb) + ',' + (32 + vb) + '%,' + (44 + vb * 0.8 + nb) + '%)');
     } else {
-      w.color[i] = 'hsl(' + (98 + v * 12).toFixed(0) + ',' + (42 + v * 8).toFixed(0) + '%,' + (33 + v * 4 + nv * 7).toFixed(1) + '%)';
+      w.cidx[i] = w.palIndex('hsl(' + (98 + vb * 2) + ',' + (42 + vb) + '%,' + (33 + vb * 0.7 + nb * 1.4).toFixed(1) + '%)');
       if (v > 0.8) w.tuft[i] = 1;
     }
   }
@@ -171,7 +179,7 @@ function generateTerrain(n, mapType, seed, starts) {
     if (w.terrain[ty * n + tx] === T_WATER) continue;
     let near = false;
     for (const d of DIRS) { const nx = tx + d[0], ny = ty + d[1]; if (w.inb(nx, ny) && w.terrain[ny * n + nx] === T_WATER) near = true; }
-    if (near) { w.terrain[ty * n + tx] = T_DIRT; w.color[ty * n + tx] = 'hsl(45,45%,62%)'; w.tuft[ty * n + tx] = 0; }
+    if (near) { w.terrain[ty * n + tx] = T_DIRT; w.cidx[ty * n + tx] = w.palIndex('hsl(45,45%,62%)'); w.tuft[ty * n + tx] = 0; }
   }
   return w;
 }

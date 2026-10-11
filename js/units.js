@@ -142,6 +142,7 @@ G.updateUnit = function (u, dt) {
   u.hitT = Math.max(0, u.hitT - dt);
   u.atkT = Math.max(0, u.atkT - dt);
   u.moving = false;
+  u.working = false;
   u.anim += dt;
   const o = u.order;
   if (!o) { this.idleUnit(u, dt); return; }

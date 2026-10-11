@@ -66,6 +66,14 @@ const UNITS = {
   elephant: { name: 'Elefante de Guerra', icon: '🐘', cls: ['cavalry', 'melee', 'unique'], cost: { food: 100, gold: 70 }, time: 25, hp: 450, atk: 15, armor: [1, 3], range: 0, speed: 0.9, los: 4, reload: 2, bld: 'castle', age: 2, scale: 1.7, desc: 'Gigante blindado. Lento e resistente.' },
   janissary: { name: 'Janízaro', icon: '💥', cls: ['infantry', 'ranged', 'unique'], cost: { food: 60, gold: 55 }, time: 21, hp: 35, atk: 17, armor: [0, 0], range: 8, speed: 0.96, los: 8, reload: 3.5, bld: 'castle', age: 2, proj: 'bullet', desc: 'Atirador de pólvora de longo alcance.' },
   samurai: { name: 'Samurai', icon: '⚔️', cls: ['infantry', 'melee', 'unique'], cost: { food: 60, gold: 30 }, time: 12, hp: 60, atk: 8, bonus: { unique: 10 }, armor: [1, 1], range: 0, speed: 1.0, los: 4, reload: 1.4, bld: 'castle', age: 2, desc: 'Espadachim de ataque muito rápido.' },
+  berserker: { name: 'Berserker', icon: '🪓', cls: ['infantry', 'melee', 'unique'], cost: { food: 65, gold: 25 }, time: 14, hp: 55, atk: 9, armor: [0, 1], range: 0, speed: 1.05, los: 4, reload: 2, bld: 'castle', age: 2, desc: 'Guerreiro nórdico furioso e veloz.' },
+  teutonic: { name: 'Cavaleiro Teutônico', icon: '🛡️', cls: ['infantry', 'melee', 'unique'], cost: { food: 85, gold: 40 }, time: 12, hp: 80, atk: 12, armor: [5, 2], range: 0, speed: 0.8, los: 4, reload: 2, bld: 'castle', age: 2, desc: 'Infantaria pesada, lenta e quase indestrutível.' },
+  conquistador: { name: 'Conquistador', icon: '🔫', cls: ['cavalry', 'ranged', 'unique'], cost: { food: 60, gold: 70 }, time: 24, hp: 55, atk: 16, armor: [0, 0], range: 6, speed: 1.3, los: 6, reload: 3.5, bld: 'castle', age: 2, proj: 'bullet', desc: 'Cavaleiro com arcabuz de longo alcance.' },
+  cataphract: { name: 'Catafracto', icon: '🐴', cls: ['cavalry', 'melee', 'unique'], cost: { food: 70, gold: 75 }, time: 28, hp: 110, atk: 12, bonus: { infantry: 8 }, armor: [2, 2], range: 0, speed: 1.35, los: 4, reload: 1.8, bld: 'castle', age: 2, desc: 'Cavalaria blindada, devastadora contra infantaria.' },
+  mameluke: { name: 'Mameluco', icon: '🐪', cls: ['cavalry', 'melee', 'unique'], cost: { food: 55, gold: 85 }, time: 26, hp: 65, atk: 8, bonus: { cavalry: 10 }, armor: [1, 1], range: 0, speed: 1.4, los: 4, reload: 1.6, bld: 'castle', age: 2, desc: 'Cavaleiro de camelo, mortal contra cavalaria.' },
+  woad: { name: 'Guerreiro Woad', icon: '⚔️', cls: ['infantry', 'melee', 'unique'], cost: { food: 65, gold: 25 }, time: 10, hp: 45, atk: 8, armor: [0, 0], range: 0, speed: 1.35, los: 4, reload: 2, bld: 'castle', age: 2, desc: 'Infantaria extremamente veloz.' },
+  jaguar: { name: 'Guerreiro Jaguar', icon: '🐆', cls: ['infantry', 'melee', 'unique'], cost: { food: 60, gold: 30 }, time: 14, hp: 55, atk: 10, bonus: { infantry: 10 }, armor: [0, 1], range: 0, speed: 1.0, los: 4, reload: 2, bld: 'castle', age: 2, desc: 'Especialista em matar infantaria.' },
+  plumed: { name: 'Arqueiro Emplumado', icon: '🪶', cls: ['archer', 'ranged', 'unique'], cost: { wood: 45, gold: 45 }, time: 16, hp: 45, atk: 6, armor: [0, 0], range: 5, speed: 1.15, los: 7, reload: 2, bld: 'castle', age: 2, proj: 'arrow', desc: 'Arqueiro rápido e resistente.' },
 };
 for (const id in UNITS) { UNITS[id].id = id; if (!UNITS[id].bonus) UNITS[id].bonus = {}; }
 
@@ -107,7 +115,7 @@ T('age3', { name: 'Avançar para a Idade Imperial', icon: '👑', cost: { food: 
 T('loom', { name: 'Tear', icon: '🧵', cost: { gold: 50 }, time: 25, bld: 'towncenter', desc: 'Aldeões: +15 PV, +1/+2 armadura.', effects: [cls('villager', 'hp', 15), cls('villager', 'armorM', 1), cls('villager', 'armorP', 2)] });
 T('wheelbarrow', { name: 'Carrinho de Mão', icon: '🛒', cost: { food: 175, wood: 50 }, time: 75, bld: 'towncenter', age: 1, desc: 'Aldeões: +10% velocidade, +3 de carga.', effects: [clsMul('villager', 'speed', 1.1), { t: 'carry', add: 3 }] });
 T('handcart', { name: 'Carroça', icon: '🛻', cost: { food: 300, wood: 200 }, time: 90, bld: 'towncenter', age: 2, req: ['wheelbarrow'], desc: 'Aldeões: +10% velocidade, +7 de carga.', effects: [clsMul('villager', 'speed', 1.1), { t: 'carry', add: 7 }] });
-T('townwatch', { name: 'Vigilância', icon: '👁️', cost: { food: 75 }, time: 25, bld: 'towncenter', age: 1, desc: 'Edifícios e unidades: +4 de visão.', effects: [{ t: 'bldlos', add: 4 }] });
+T('townwatch', { name: 'Vigilância', icon: '👁️', cost: { food: 75 }, time: 25, bld: 'towncenter', age: 1, desc: 'Edifícios +4 e unidades +2 de visão.', effects: [{ t: 'bldlos', add: 4 }, cls('all', 'los', 2)] });
 // Serraria
 T('doublebit', { name: 'Machado de Dois Gumes', icon: '🪓', cost: { food: 100, wood: 50 }, time: 25, bld: 'lumbercamp', desc: 'Lenhadores trabalham 20% mais rápido.', effects: [{ t: 'gather', k: 'wood', mul: 1.2 }] });
 T('bowsaw', { name: 'Serra de Arco', icon: '🪚', cost: { food: 150, wood: 100 }, time: 50, bld: 'lumbercamp', age: 1, req: ['doublebit'], desc: 'Lenhadores trabalham 20% mais rápido.', effects: [{ t: 'gather', k: 'wood', mul: 1.2 }] });
@@ -178,6 +186,30 @@ const CIVS = {
   japanese: { name: 'Japoneses', flag: '🇯🇵', unique: 'samurai', uniqueDesc: 'Samurai: espadachim veloz.',
     bonuses: ['Moinho, Serraria e Mineração custam 50% menos', 'Infantaria ataca 25% mais rápido', 'Caça 5% mais rápida'],
     effects: [{ t: 'bcost', id: 'mill', mul: 0.5 }, { t: 'bcost', id: 'lumbercamp', mul: 0.5 }, { t: 'bcost', id: 'miningcamp', mul: 0.5 }, clsMul('infantry', 'reload', 0.8), { t: 'gather', k: 'hunt', mul: 1.05 }] },
+  vikings: { name: 'Vikings', flag: '⚓', unique: 'berserker', uniqueDesc: 'Berserker: guerreiro veloz.',
+    bonuses: ['Infantaria +20% PV', 'Pesquisas da Ferraria custam 15% menos', 'Aldeões carregam +3 recursos'],
+    effects: [clsMul('infantry', 'hp', 1.2), { t: 'tcost', bld: 'blacksmith', mul: 0.85 }, { t: 'carry', add: 3 }] },
+  teutons: { name: 'Teutões', flag: '🛡️', unique: 'teutonic', uniqueDesc: 'Cavaleiro Teutônico: tanque de infantaria.',
+    bonuses: ['Torres e Castelos +2 de ataque', 'Infantaria +1 de armadura corpo a corpo', 'Mineração de pedra 20% mais rápida'],
+    effects: [{ t: 'bldatk', add: 2 }, cls('infantry', 'armorM', 1), { t: 'gather', k: 'stone', mul: 1.2 }] },
+  spanish: { name: 'Espanhóis', flag: '🇪🇸', unique: 'conquistador', uniqueDesc: 'Conquistador: cavaleiro com pólvora.',
+    bonuses: ['Quartel, Arquearia e Estábulo custam 15% menos', 'Cavalaria +1 de ataque', 'Mineração de ouro 10% mais rápida'],
+    effects: [{ t: 'bcost', id: 'barracks', mul: 0.85 }, { t: 'bcost', id: 'archeryrange', mul: 0.85 }, { t: 'bcost', id: 'stable', mul: 0.85 }, cls('cavalry', 'atk', 1), { t: 'gather', k: 'gold', mul: 1.1 }] },
+  byzantines: { name: 'Bizantinos', flag: '✝️', unique: 'cataphract', uniqueDesc: 'Catafracto: cavalaria anti-infantaria.',
+    bonuses: ['Edifícios +10% de PV', 'Cavaleiros custam 15% menos', 'Torres e Castelos +1 de armadura de edifício (Alvenaria grátis)'],
+    effects: [{ t: 'bhp', mul: 1.1 }, { t: 'cost', cls: 'knight', mul: 0.85 }, { minAge: 2, t: 'barmor', add: 1 }] },
+  saracens: { name: 'Sarracenos', flag: '🌙', unique: 'mameluke', uniqueDesc: 'Mameluco: camelo contra cavalaria.',
+    bonuses: ['Arqueiros +1 de ataque', 'Começa com +100 de ouro', 'Cavalaria +10% PV'],
+    start: { res: { gold: 100 } }, effects: [cls('archer', 'atk', 1), clsMul('cavalry', 'hp', 1.1)] },
+  celts: { name: 'Celtas', flag: '☘️', unique: 'woad', uniqueDesc: 'Guerreiro Woad: infantaria ultrarrápida.',
+    bonuses: ['Infantaria 15% mais rápida', 'Lenhadores 15% mais rápidos', 'Armas de cerco +25% PV'],
+    effects: [clsMul('infantry', 'speed', 1.15), { t: 'gather', k: 'wood', mul: 1.15 }, clsMul('siege', 'hp', 1.25)] },
+  aztecs: { name: 'Astecas', flag: '🌞', unique: 'jaguar', uniqueDesc: 'Guerreiro Jaguar: caçador de infantaria.',
+    bonuses: ['Aldeões carregam +5 recursos', 'Infantaria +1 de ataque', 'Começa com +50 de ouro'],
+    start: { res: { gold: 50 } }, effects: [{ t: 'carry', add: 5 }, cls('infantry', 'atk', 1)] },
+  mayans: { name: 'Maias', flag: '🗿', unique: 'plumed', uniqueDesc: 'Arqueiro Emplumado: veloz e preciso.',
+    bonuses: ['Arqueiros custam 20% menos', 'Fazendas rendem 10% mais', 'Começa com +50 de comida'],
+    start: { res: { food: 50 } }, effects: [{ t: 'cost', cls: 'archer', mul: 0.8 }, { t: 'gather', k: 'farm', mul: 1.1 }] },
 };
 for (const id in CIVS) CIVS[id].id = id;
 
@@ -185,7 +217,7 @@ for (const id in CIVS) CIVS[id].id = id;
 const AI_LEVELS = {
   easy: { name: 'Fácil', think: 2.2, vils: 28, wave: 14, waveGrow: 6, firstAttack: 780, gatherMul: 0.85, upgrades: 0.35, keepArmy: 0.55 },
   moderate: { name: 'Moderada', think: 1.4, vils: 45, wave: 24, waveGrow: 8, firstAttack: 600, gatherMul: 1.0, upgrades: 0.7, keepArmy: 0.35 },
-  hard: { name: 'Difícil', think: 0.9, vils: 62, wave: 34, waveGrow: 10, firstAttack: 480, gatherMul: 1.0, upgrades: 1.0, keepArmy: 0.2 },
+  hard: { name: 'Difícil', think: 0.9, vils: 62, wave: 34, waveGrow: 10, firstAttack: 480, gatherMul: 1.1, upgrades: 1.0, keepArmy: 0.2 },
   expert: { name: 'Especialista', think: 0.6, vils: 75, wave: 42, waveGrow: 12, firstAttack: 400, gatherMul: 1.2, upgrades: 1.0, keepArmy: 0.1 },
 };
 

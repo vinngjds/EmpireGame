@@ -99,6 +99,8 @@ class UI {
     window.addEventListener('mousemove', this.mv = e => this.onMouseMove(e));
     cv.addEventListener('wheel', e => { e.preventDefault(); this.zoom(e.deltaY < 0 ? 1.1 : 1 / 1.1, e.clientX, e.clientY); }, { passive: false });
     cv.addEventListener('dblclick', e => this.onDblClick(e));
+    document.documentElement.addEventListener('mouseleave', this.ml = () => { this.mouse.inside = false; });
+    window.addEventListener('blur', this.bl = () => { this.mouse.inside = false; this.keys = {}; });
     window.addEventListener('keydown', this.kd = e => this.onKey(e, true));
     window.addEventListener('keyup', this.ku = e => this.onKey(e, false));
     const card = this.el.card;
@@ -146,6 +148,8 @@ class UI {
     window.removeEventListener('mouseup', this.mu); window.removeEventListener('mousemove', this.mv);
     window.removeEventListener('keydown', this.kd); window.removeEventListener('keyup', this.ku);
     window.removeEventListener('mouseup', this.mmu);
+    window.removeEventListener('blur', this.bl);
+    document.documentElement.removeEventListener('mouseleave', this.ml);
   }
 
   // ------------------------------------------------------------------ seleção
@@ -636,6 +640,14 @@ class UI {
           + (s.range ? '<span title="Alcance">🎯 ' + s.range + '</span>' : '') + '<span title="Visão">👁️ ' + Math.round(s.los) + '</span><span title="Velocidade">👟 ' + s.speed.toFixed(2) + '</span></div>'
           + (e.carry && e.carry.n > 0.5 ? '<div class="carry">Carregando: ' + RES_ICON[e.carry.res] + ' ' + Math.floor(e.carry.n) + '</div>' : '')
           + '<div class="own" style="color:' + pl.color + '">' + (own ? '' : pl.name + ' (' + CIVS[pl.civ].name + ')') + '</div></div></div>';
+      } else if (e.kind === 'res' || e.kind === 'animal') {
+        const nm = e.kind === 'animal' ? RES_LABEL.deer : RES_LABEL[e.type];
+        const ic = { tree: '🌳', gold: '🪙', stone: '🪨', berry: '🫐', carcass: '🥩' }[e.type] || '🦌';
+        const food = e.kind === 'animal' ? e.food : e.amount;
+        const kind = e.kind === 'animal' ? 'food' : e.res;
+        html = '<div class="one"><div class="portrait" style="border-color:#6b5632">' + ic + '</div><div class="det"><h3>' + nm + '</h3>'
+          + '<div class="carry">' + RES_ICON[kind] + ' ' + RES_NAME[kind] + ': ' + Math.ceil(food) + '</div>'
+          + '<p class="dim" style="margin:6px 0">Selecione aldeões e clique com o botão direito para coletar.</p></div></div>';
       } else if (e.kind === 'building') {
         const d = BUILDINGS[e.type], pl = g.players[e.owner];
         html = '<div class="one"><div class="portrait" style="border-color:' + pl.color + '">' + d.icon + '</div><div class="det"><h3>' + d.name + '</h3>'

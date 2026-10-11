@@ -28,6 +28,8 @@ const AGE_STYLE = [
   { wall: '#dcd8cf', roof: '#3f5f8c', trim: '#d4b14a' },   // imperial: mármore
 ];
 
+const TYPE_ROOF = { barracks: '#9a3f35', archeryrange: '#3f7a40', stable: '#7a5430', blacksmith: '#555a64', market: '#8a4f8f', siegeworkshop: '#6a5232', tower: '#6b6f78', castle: '#58606e', mill: '#b89a58', lumbercamp: '#8a6236', miningcamp: '#7a7f88' };
+
 class Renderer {
   constructor(canvas, game, ui) {
     this.cv = canvas; this.ctx = canvas.getContext('2d');
@@ -94,24 +96,46 @@ class Renderer {
   // ---------------------------------------------------------------- terreno
   drawTerrain() {
     const g = this.g, w = g.world, ctx = this.ctx, n = g.n;
+    const np = w.palette.length;
+    if (!this.pbuf || this.pbuf.length !== np) this.pbuf = Array.from({ length: np }, () => []);
+    const buf = this.pbuf;
+    for (let k = 0; k < np; k++) buf[k].length = 0;
+    const V = this.view;
+    const deco = [];
     for (let ty = this.ty0; ty <= this.ty1; ty++) {
       for (let tx = this.tx0; tx <= this.tx1; tx++) {
         const i = ty * n + tx;
         const sx = isoX(tx, ty), sy = isoY(tx, ty);
-        if (sx < this.view.x0 || sx > this.view.x1 || sy < this.view.y0 || sy > this.view.y1) continue;
-        ctx.fillStyle = w.color[i];
-        ctx.beginPath();
-        ctx.moveTo(sx, sy - 0.5); ctx.lineTo(sx + HW + 0.6, sy + HH); ctx.lineTo(sx, sy + 2 * HH + 0.5); ctx.lineTo(sx - HW - 0.6, sy + HH);
-        ctx.closePath(); ctx.fill();
-        if (w.terrain[i] === T_WATER) {
-          // brilho animado
-          const k = Math.sin(this.time * 1.5 + tx * 0.7 + ty * 0.5);
-          if (k > 0.6) { ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(sx - 6, sy + HH - 1, 12, 2); }
-        } else if (w.tuft[i]) {
-          ctx.strokeStyle = 'rgba(30,70,20,0.55)'; ctx.lineWidth = 1;
-          ctx.beginPath(); ctx.moveTo(sx - 4, sy + HH + 3); ctx.lineTo(sx - 5, sy + HH - 2); ctx.moveTo(sx - 2, sy + HH + 3); ctx.lineTo(sx - 2, sy + HH - 3); ctx.moveTo(sx, sy + HH + 3); ctx.lineTo(sx + 1, sy + HH - 2); ctx.stroke();
-        }
+        if (sx < V.x0 || sx > V.x1 || sy < V.y0 || sy > V.y1) continue;
+        buf[w.cidx[i]].push(sx, sy);
+        if (w.terrain[i] === T_WATER || w.tuft[i]) deco.push(i, sx, sy);
       }
+    }
+    for (let k = 0; k < np; k++) {
+      const a = buf[k];
+      if (!a.length) continue;
+      ctx.fillStyle = w.palette[k];
+      ctx.beginPath();
+      for (let j = 0; j < a.length; j += 2) {
+        const sx = a[j], sy = a[j + 1];
+        ctx.moveTo(sx, sy - 0.5); ctx.lineTo(sx + HW + 0.6, sy + HH); ctx.lineTo(sx, sy + 2 * HH + 0.5); ctx.lineTo(sx - HW - 0.6, sy + HH); ctx.closePath();
+      }
+      ctx.fill();
+    }
+    // decoração: reflexos na água e tufos de grama
+    ctx.beginPath(); ctx.strokeStyle = 'rgba(30,70,20,0.55)'; ctx.lineWidth = 1;
+    for (let j = 0; j < deco.length; j += 3) {
+      const i = deco[j], sx = deco[j + 1], sy = deco[j + 2];
+      if (w.terrain[i] === T_WATER) continue;
+      ctx.moveTo(sx - 4, sy + HH + 3); ctx.lineTo(sx - 5, sy + HH - 2); ctx.moveTo(sx - 2, sy + HH + 3); ctx.lineTo(sx - 2, sy + HH - 3); ctx.moveTo(sx, sy + HH + 3); ctx.lineTo(sx + 1, sy + HH - 2);
+    }
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.13)';
+    for (let j = 0; j < deco.length; j += 3) {
+      const i = deco[j];
+      if (w.terrain[i] !== T_WATER) continue;
+      const tx = i % n, ty = (i / n) | 0;
+      if (Math.sin(this.time * 1.5 + tx * 0.7 + ty * 0.5) > 0.6) ctx.fillRect(deco[j + 1] - 6, deco[j + 2] + HH - 1, 12, 2);
     }
   }
 
@@ -164,6 +188,13 @@ class Renderer {
       else if (e.kind === 'building') this.drawBuilding(e, selected);
       else if (e.kind === 'res') this.drawResource(e);
       else if (e.kind === 'animal') this.drawAnimal(e, it.sx, it.sy);
+    }
+    // pontos de encontro dos edifícios selecionados
+    if (sel) for (const it of list) {
+      const e = it.e;
+      if (e.kind !== 'building' || !sel.has(e.id) || !e.rally || e.owner !== g.humanIdx) continue;
+      ctx.setLineDash([5, 4]); line(ctx, isoX(e.x, e.y), isoY(e.x, e.y), isoX(e.rally.x, e.rally.y), isoY(e.rally.x, e.rally.y), 'rgba(120,210,255,0.8)', 1.5); ctx.setLineDash([]);
+      this.flag(e.rally.x, e.rally.y, '#4fc3ff', 0);
     }
     // barras de vida
     for (const b of this.bars) {
@@ -223,7 +254,6 @@ class Renderer {
     if (o && o.type === 'gather' && u.working) { tool = o.rkey; ang = Math.sin(u.anim * 9) * 0.9; }
     else if (o && o.type === 'build' && u.working) { tool = 'build'; ang = Math.sin(u.anim * 11) * 0.9; }
     else if (u.atkT > 0) { tool = 'sword'; ang = swing * 1.4; }
-    u.working = false;
     if (tool) {
       const hx = 5 + Math.sin(ang) * 3, hy = -10 + Math.cos(ang) * 2 - Math.abs(Math.sin(ang)) * 4 + y;
       line(ctx, 3, -11 + y, hx, hy, '#e0b48c', 1.6);
@@ -476,7 +506,8 @@ class Renderer {
     const ctx = this.ctx, g = this.g;
     const p = g.players[b.owner];
     const def = BUILDINGS[b.type];
-    const st = AGE_STYLE[p.age];
+    const st = Object.assign({}, AGE_STYLE[p.age]);
+    if (TYPE_ROOF[b.type]) st.roof = shade(TYPE_ROOF[b.type], p.age * 0.07);
     const x0 = b.tx, y0 = b.ty, w = b.w, h = b.h;
     const col = p.color;
     const prog = b.complete ? 1 : b.progress;
