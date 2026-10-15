@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fazenda Império — Testes</title>
+  <meta name="description" content="Painel de testes das funcionalidades do Fazenda Império: bateria automática, roteiro guiado e sandbox com atalhos.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧪</text></svg>">
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    .tp { max-width: 1500px; margin: 0 auto; padding: 16px; }
+    .tp-head { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 14px; }
+    .tp-head h1 { font-size: 20px; margin: 0; }
+    .summary { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .pill { padding: 4px 12px; border-radius: 20px; font-weight: 600; background: var(--surface-2); border: 1px solid var(--line); }
+    .pill.pass { border-color: var(--good); color: var(--good-ink); }
+    .pill.fail { border-color: var(--critical); color: var(--critical); }
+    .groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; }
+    .tgroup h3 { display: flex; justify-content: space-between; }
+    .trow { display: grid; grid-template-columns: 22px 1fr auto; gap: 6px; padding: 4px 0; border-bottom: 1px solid var(--grid); font-size: 13px; }
+    .trow .err { grid-column: 2 / 4; color: var(--critical); font-size: 12px; }
+    .trow .ms { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .guide { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; }
+    .step { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--surface-2); display: flex; flex-direction: column; gap: 6px; }
+    .step b { font-size: 14px; } .step p { margin: 0; font-size: 12px; color: var(--ink-2); }
+    .step .btn { align-self: flex-start; }
+    .step.done { border-color: var(--good); }
+    .cheats { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .cheats select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+    .sandbox { border: 2px dashed var(--line); border-radius: 14px; overflow: hidden; margin-top: 10px; }
+    .sandbox .top { position: static; }
+  </style>
+</head>
+<body>
+  <div class="tp">
+    <div class="tp-head">
+      <h1>🧪 Fazenda Império — painel de testes</h1>
+      <div class="summary" id="summary"><span class="pill">Rodando testes…</span></div>
+      <div class="btns" style="margin:0"><button class="btn" id="rerun">↻ Rodar testes de novo</button><a class="btn primary" href="index.html" style="text-decoration:none">▶ Abrir o jogo</a></div>
+    </div>
+
+    <section class="card">
+      <div class="card-h"><h2>1. Testes automáticos do motor</h2><span class="muted small">Mesmo código de <code>tests/suite.js</code> usado no Node (<code>node tests/run.js</code>)</span></div>
+      <div class="groups" id="results"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-h"><h2>2. Roteiro de teste manual</h2><span class="muted small">Cada botão prepara o cenário no sandbox abaixo e abre a tela certa. Marque ✓ ao conferir.</span></div>
+      <div class="guide" id="guide"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-h"><h2>3. Sandbox — o jogo completo com atalhos</h2><span class="muted small">Salva separado do jogo principal; não afeta seu progresso.</span></div>
+      <div class="cheats">
+        <button class="btn small" data-cheat="money">💵 +R$ 100 mil</button>
+        <label style="margin:0">Nível <select id="lvl"></select></label>
+        <button class="btn small" data-cheat="stock">📦 Encher estoque</button>
+        <button class="btn small" data-cheat="d30">⏩ +30 dias</button>
+        <button class="btn small" data-cheat="d360">⏩ +1 ano</button>
+        <select id="ev"></select><button class="btn small" data-cheat="event">⚡ Disparar evento</button>
+        <button class="btn small" data-cheat="year2">🤖 Fazenda do ano 2 (bot)</button>
+        <button class="btn small danger" data-cheat="broke">💀 Forçar falência</button>
+        <button class="btn small ghost" data-cheat="reset">🌱 Reiniciar (semente 42)</button>
+      </div>
+      <div class="sandbox"><div id="app"></div></div>
+    </section>
+  </div>
+
+  <script src="js/data.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="tests/bots.js"></script>
+  <script src="tests/suite.js"></script>
+  <script>
+  (function () {
+    const E = FG.Engine, UI = FG.UI, P = FG.PRODUCTS;
+    const $ = (s) => document.querySelector(s);
+    const done = {};
+    try { Object.assign(done, JSON.parse(localStorage.getItem('fazendaImperio.teste.roteiro') || '{}')); } catch (e) {}
+
+    // ---------- 1. bateria automática ----------
+    function runSuite() {
+      $('#summary').innerHTML = '<span class="pill">Rodando testes…</span>';
+      $('#results').innerHTML = '';
+      setTimeout(() => {
+        const t0 = performance.now();
+        const res = FG.TestSuite.run();
+        const fail = res.filter(r => !r.ok).length;
+        $('#summary').innerHTML = `<span class="pill ${fail ? 'fail' : 'pass'}">${fail ? '❌' : '✅'} ${res.length - fail}/${res.length} passaram</span><span class="muted small">${(performance.now() - t0).toFixed(0)} ms</span>`;
+        const groups = {};
+        res.forEach(r => (groups[r.group] = groups[r.group] || []).push(r));
+        $('#results').innerHTML = Object.entries(groups).map(([g, rs]) => `<div class="tgroup"><h3>${g}<span class="muted small">${rs.filter(r => r.ok).length}/${rs.length}</span></h3>
+          ${rs.map(r => `<div class="trow"><span>${r.ok ? '✅' : '❌'}</span><span>${r.name}</span><span class="ms">${r.ms.toFixed(0)} ms</span>${r.ok ? '' : `<span class="err">${r.error}</span>`}</div>`).join('')}</div>`).join('');
+      }, 30);
+    }
+    $('#rerun').onclick = runSuite;
+
+    // ---------- 3. sandbox ----------
+    UI.mount($('#app'), { debug: true, saveKey: 'fazendaImperio.teste', state: E.newGame({ seed: 42 }) });
+    const S = () => UI.state();
+    const lvl = $('#lvl');
+    lvl.innerHTML = FG.LEVELS.map((_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('');
+    lvl.onchange = () => setLevel(+lvl.value);
+    $('#ev').innerHTML = FG.EVENTS.map(e => `<option value="${e.id}">${e.icon} ${e.title}</option>`).join('');
+    function setLevel(n) {
+      const s = S();
+      s.revenueTotal = Math.max(s.revenueTotal, FG.LEVELS[n - 1] * 1000);
+      if (s.level > n) s.level = n;
+      E.updateLevel(s); lvl.value = s.level; UI.render();
+    }
+    function fillStock() {
+      const s = S();
+      for (const p in P) if (s.stock[p].qty < 1) E.addStock(s, p, Math.min(400, 3000 / P[p].weight), E.estUnitCost(s, p));
+    }
+    function freeTile(s) {
+      let i = s.tiles.findIndex(t => t.owned && t.kind === 'land' && !t.crop);
+      if (i < 0) { i = s.tiles.findIndex(t => !t.owned && s.tiles.some(o => o.owned && Math.abs(o.x - t.x) + Math.abs(o.y - t.y) === 1)); s.tiles[i].owned = true; }
+      return i;
+    }
+    const cheats = {
+      money: () => { S().cash += 100000; },
+      stock: fillStock,
+      d30: () => UI.advance(30),
+      d360: () => UI.advance(360),
+      event: () => { E.triggerEvent(S(), $('#ev').value); UI.toast('Evento disparado — veja o Diário.', 'info'); },
+      year2: () => { const s = FG.Bots.run(FG.Bots.smartBot, 77, 360); s.settings.autoHarvest = true; UI.setState(s); lvl.value = s.level; },
+      broke: () => { const s = S(); s.cash = -E.overdraftLimit(s) - 1000; UI.advance(1); },
+      reset: () => { UI.setState(E.newGame({ seed: 42 })); lvl.value = 1; },
+    };
+    document.querySelector('.cheats').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-cheat]'); if (!b) return;
+      cheats[b.dataset.cheat](); UI.render();
+    });
+
+    // ---------- 2. roteiro guiado ----------
+    const steps = [
+      { id: 'farm', t: '🏡 Visão da fazenda', d: 'Mapa em lotes: plantar, construir, comprar terra (➕), colher. Confira estoque, mão de obra, criação e frota no painel lateral.', go: () => { UI.ui.sel = S().tiles.findIndex(t => t.owned && t.kind === 'land' && !t.crop); UI.go('farm'); } },
+      { id: 'grow', t: '🌱 Ciclo de produção', d: 'Planta tomate num lote livre e avança 28 dias: a lavoura passa de 🌱 a 🍅 e é colhida para o estoque.', go: () => { const s = S(); s.cash += 5000; const i = freeTile(s); E.plant(s, i, 'tomate'); UI.ui.sel = i; UI.go('farm'); UI.advance(28); } },
+      { id: 'animals', t: '🐔 Animais e ração', d: 'Constrói um galinheiro com 100 galinhas e avança 7 dias: ovos no estoque e ração descontada (milho próprio primeiro).', go: () => { const s = S(); s.cash += 20000; const i = freeTile(s); E.build(s, i, 'galinheiro'); E.buyAnimals(s, 'galinha', 100); UI.ui.sel = i; UI.go('farm'); UI.advance(7); } },
+      { id: 'labor', t: '👷 Falta de mão de obra', d: 'Planta milho em todos os lotes livres sem contratar: aparece o alerta e a eficiência cai. Contrate no painel “Mão de obra”.', go: () => { const s = S(); s.cash += 20000; s.tiles.forEach((t, i) => { if (t.owned && t.kind === 'land' && !t.crop) E.plant(s, i, 'milho'); }); UI.go('farm'); } },
+      { id: 'city', t: '🏙️ Mapa da cidade', d: 'Bairros coloridos pela demanda do produto filtrado (Leite selecionado). Clique em um bairro e em um comprador (ícone) para ver pedidos.', go: () => { UI.ui.cityProduct = 'leite'; UI.ui.buyer = 'bompreco'; UI.go('city'); } },
+      { id: 'neg', t: '🤝 Negociação completa', d: 'Cria estoque e um pedido do Supermercado Família e abre a negociação: confira impostos, frete, custo, lucro, margem e preço mínimo; peça caro para ver a contraproposta.', go: () => {
+          const s = S(); E.addStock(s, 'tomate', 60, 18);
+          const ref = E.cityPrice(s, 'tomate') * 0.97;
+          s.orders.push({ id: s.nextId++, buyer: 'familia', product: 'tomate', qty: 40, ref: +ref.toFixed(2), reserve: +(ref * 1.12).toFixed(2), created: s.day, deadline: s.day + 6, pay: 21, contract: false, weeks: 0, rounds: 0, maxRounds: 3, counter: null, bloc: null });
+          UI.go('biz'); setTimeout(() => document.querySelector(`[data-act="negotiate"][data-id="${s.nextId - 1}"]`).click(), 50); } },
+      { id: 'contract', t: '📝 Contrato recorrente', d: 'Cria um pedido de contrato de ovos (4 semanas). Feche-o, avance 7 dias e veja a entrega automática em Negócios › Contratos.', go: () => {
+          const s = S(); E.addStock(s, 'ovos', 120, 9);
+          const ref = E.cityPrice(s, 'ovos');
+          s.orders.push({ id: s.nextId++, buyer: 'mercadao', product: 'ovos', qty: 25, ref: +ref.toFixed(2), reserve: +(ref * 1.1).toFixed(2), created: s.day, deadline: s.day + 6, pay: 7, contract: true, weeks: 4, rounds: 0, maxRounds: 3, counter: null, bloc: null });
+          UI.ui.bizTab = 'orders'; UI.go('biz'); } },
+      { id: 'spot', t: '🏬 Venda rápida na Ceasa', d: 'Abre a venda de alface na Ceasa: preço de atacado, impacto do volume e frete. Depois veja a saturação subir na tabela da Cidade.', go: () => { const s = S(); E.addStock(s, 'alface', 300, 5); UI.ui.bizTab = 'spot'; UI.go('biz'); setTimeout(() => document.querySelector('[data-act="spot"][data-p="alface"]').click(), 50); } },
+      { id: 'country', t: '🇧🇷 País e macroeconomia', d: 'Dispara “Dólar dispara” e avança 20 dias: veja dólar, inflação e preços nacionais/regionais mudarem. Clique numa região para o frete estimado.', go: () => { E.triggerEvent(S(), 'dolarUp'); UI.advance(20); UI.ui.region = 'nordeste'; UI.ui.countryProduct = 'trigo'; UI.go('country'); } },
+      { id: 'world', t: '🌎 Mundo e choques globais', d: 'Dispara “Seca no meio-oeste dos EUA” e avança 30 dias: a notícia aparece e soja/milho sobem em dólar e em reais.', go: () => { E.triggerEvent(S(), 'secaEUA'); UI.advance(30); UI.ui.worldProduct = 'soja'; UI.go('world'); } },
+      { id: 'export', t: '🚢 Exportação', d: 'Sobe para o nível 5, compra a licença e enche o estoque de soja: aparecem pedidos de tradings com destino (China, UE…).', go: () => { const s = S(); setLevel(5); s.cash += 60000; E.buyLicense(s); E.addStock(s, 'soja', 400, 60); for (let k = 0; k < 300 && !s.orders.some(o => o.buyer === 'export'); k++) E.generateOrders(s); UI.go('world'); } },
+      { id: 'growth', t: '📈 Progressão e expansão', d: 'Carrega uma fazenda de 1 ano gerida pelo bot: mais lotes, silos, galinheiro, nível alto e DRE com histórico.', go: () => { cheats.year2(); UI.go('farm'); } },
+      { id: 'finance', t: '💰 Finanças e empréstimo', d: 'Abre Finanças: DRE mensal, gráfico de caixa e patrimônio, balanço e custos fixos. Simule um empréstimo e veja a parcela.', go: () => { UI.advance(30); UI.go('finance'); } },
+      { id: 'risk', t: '🚨 Risco de falência', d: 'Deixa o caixa negativo: alerta de cheque especial, juros diários e contagem regressiva de 60 dias.', go: () => { S().cash = -8000; UI.advance(1); UI.go('finance'); } },
+      { id: 'bankrupt', t: '💀 Falência', d: 'Estoura o limite do cheque especial: o banco corta o crédito e aparece a tela de falência.', go: () => cheats.broke() },
+      { id: 'save', t: '💾 Salvar e carregar', d: 'Salva o sandbox, avança 30 dias e carrega de novo pelo menu ☰ → “Carregar jogo salvo”: a data volta.', go: () => { document.querySelector('[data-act="menu"]').click(); setTimeout(() => document.querySelector('[data-act="save"]').click(), 30); setTimeout(() => UI.advance(30), 60); } },
+    ];
+    function renderGuide() {
+      $('#guide').innerHTML = steps.map(s => `<div class="step ${done[s.id] ? 'done' : ''}"><b>${s.t}</b><p>${s.d}</p>
+        <div class="btns" style="margin:0"><button class="btn small primary" data-step="${s.id}">Preparar e abrir</button><button class="btn small ghost" data-check="${s.id}">${done[s.id] ? '✓ Conferido' : 'Marcar como conferido'}</button></div></div>`).join('');
+    }
+    $('#guide').addEventListener('click', (e) => {
+      const st = e.target.closest('[data-step]'), ck = e.target.closest('[data-check]');
+      if (st) { steps.find(x => x.id === st.dataset.step).go(); UI.render(); $('#app').scrollIntoView({ behavior: 'smooth' }); }
+      if (ck) { done[ck.dataset.check] = !done[ck.dataset.check]; try { localStorage.setItem('fazendaImperio.teste.roteiro', JSON.stringify(done)); } catch (e2) {} renderGuide(); }
+    });
+    renderGuide();
+    runSuite();
+  })();
+  </script>
+</body>
+</html>
