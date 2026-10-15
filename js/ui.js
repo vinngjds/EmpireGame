@@ -351,7 +351,7 @@
       const locked = !E.unlocked(S, 'vehicle', id);
       const action = v.hired ? '<span class="muted small">sob demanda</span>' :
         locked ? `<span class="muted small">nível ${v.level}</span>` :
-        `${v.price ? `<button class="btn small" data-act="buyVehicle" data-v="${id}">Comprar ${fmt(E.vehiclePrice(S, id))}</button>` : ''}${own && v.price ? ` <button class="btn small ghost" data-act="sellVehicle" data-v="${id}">Vender</button>` : ''}`;
+        `${v.price ? `<button class="btn small" data-act="buyVehicle" data-v="${id}">Comprar ${fmt(E.vehiclePrice(S, id))}</button>` : ''}${own && v.price ? ` <button class="btn small ghost" data-act="sellVehicle" data-v="${id}" data-confirm="Vender ${v.name} por 60% do valor de mercado?">Vender</button>` : ''}`;
       return `<tr><td>${v.emoji} ${v.name}${v.hired ? '' : ` <b>×${own}</b>`}</td><td class="small">${num(v.cap / 1000, 1)} t · ${fmt(v.perKm, 2)}/km${v.roundTrip ? ' (ida+volta)' : ''}${v.fixed ? ` + ${fmt(v.fixed)}/viagem` : ''}</td><td>${action}</td></tr>`;
     }).join('');
     return `<section class="card"><h3>🚚 Frota e logística</h3><div class="tbl-wrap"><table class="tbl"><tbody>${rows}</tbody></table></div>
@@ -779,7 +779,7 @@
         <button class="btn" data-act="help">❓ Como jogar</button>
         <button class="btn" data-act="theme">🌓 Alternar tema claro/escuro</button>
         <label>Nome da fazenda<input type="text" id="farmNameIn" value="${S.farmName.replace(/"/g, '')}"></label>
-        <button class="btn primary" data-act="newGame">🌱 Novo jogo</button>
+        <button class="btn primary" data-act="newGame" data-confirm="Começar um novo jogo? O progresso não salvo será perdido.">🌱 Novo jogo</button>
       </div>` };
     renderModal();
   }
@@ -799,8 +799,22 @@
     if (e.target.id === 'modal') { closeModal(); return; }
     const el = e.target.closest('[data-act]');
     if (!el || el.disabled) return;
-    const a = el.dataset.act, ds = el.dataset;
-    if (ds.confirm && !confirm(ds.confirm)) return;
+    const a = el.dataset.act, ds = { ...el.dataset };
+    if (a === 'newGame') { const n = rootEl.querySelector('#farmNameIn'); if (n) ds.farmName = n.value.trim(); }
+    if (a === 'confirmYes') { const p = ui.pending; ui.pending = null; closeModal(); if (p) doAction(p.a, p.ds); return; }
+    if (ds.confirm) { askConfirm(a, ds); return; }
+    doAction(a, ds);
+  }
+
+  // confirmação dentro da página (confirm() nativo não funciona em todos os ambientes)
+  function askConfirm(a, ds) {
+    const clean = { ...ds }; delete clean.confirm;
+    ui.pending = { a, ds: clean };
+    ui.modal = { html: `<h2>Confirmar</h2><p>${ds.confirm}</p><div class="btns end"><button class="btn" data-act="closeModal">Cancelar</button><button class="btn primary" data-act="confirmYes">Confirmar</button></div>` };
+    renderModal();
+  }
+
+  function doAction(a, ds) {
     const i = ds.i !== undefined ? +ds.i : null;
     switch (a) {
       case 'tab': ui.tab = ds.tab; render(); window.scrollTo(0, 0); break;
@@ -813,9 +827,7 @@
       case 'load': { const s = load(); if (s) { UI.setState(s); toast('Jogo carregado.', 'good'); } else toast('Nenhum jogo salvo.', 'bad'); break; }
       case 'theme': { const d = isDark(); document.documentElement.dataset.theme = d ? 'light' : 'dark'; render(); break; }
       case 'newGame': {
-        if (!S.gameOver && !confirm('Começar um novo jogo? O progresso não salvo será perdido.')) return;
-        const nameEl = rootEl.querySelector('#farmNameIn');
-        S = E.newGame({ farmName: nameEl && nameEl.value.trim() ? nameEl.value.trim() : undefined });
+        S = E.newGame({ farmName: ds.farmName || undefined });
         ui.sel = null; ui.buyer = null; ui.tab = 'farm'; closeModal(); save(true); render(); break;
       }
       case 'closeModal': closeModal(); render(); break;
@@ -831,7 +843,7 @@
       case 'hire': result(E.hire(S)); break;
       case 'fire': result(E.fire(S)); break;
       case 'buyVehicle': result(E.buyVehicle(S, ds.v)); break;
-      case 'sellVehicle': if (confirm('Vender veículo por 60% do valor?')) result(E.sellVehicle(S, ds.v)); break;
+      case 'sellVehicle': result(E.sellVehicle(S, ds.v)); break;
       case 'license': result(E.buyLicense(S)); break;
       case 'cityProduct': ui.cityProduct = ds.p; render(); break;
       case 'countryProduct': ui.countryProduct = ds.p; render(); break;
